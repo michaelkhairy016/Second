@@ -10,11 +10,13 @@ export type Profile = Tables<"profiles">;
 export type UserRole = Tables<"user_roles">;
 export type StationAssignment = Tables<"station_assignments">;
 export type StationAccessRequest = Tables<"station_access_requests">;
+export type Issue = Tables<"issues">;
 
 // Insert types
 export type VehicleInsert = TablesInsert<"vehicles">;
 export type StationEventInsert = TablesInsert<"station_events">;
 export type ShortageInsert = TablesInsert<"shortages">;
+export type IssueInsert = TablesInsert<"issues">;
 
 // Update types
 export type VehicleUpdate = TablesUpdate<"vehicles">;
@@ -27,6 +29,8 @@ export type EventKind = Enums<"event_kind">;
 export type ShortageStatus = Enums<"shortage_status">;
 export type AccessRequestStatus = Enums<"access_request_status">;
 export type LotStatus = Enums<"lot_status">;
+export type IssueSeverity = Enums<"issue_severity">;
+export type IssueStatus = Enums<"issue_status">;
 
 // Joined types used across routes
 export type ShortageWithVehicle = Shortage & {
@@ -44,4 +48,9 @@ export type VehicleSearchResult = Pick<
 
 export type AccessRequestWithProfile = StationAccessRequest & {
   profile: { display_name: string } | null;
+};
+
+export type IssueWithVehicle = Issue & {
+  vehicle: Pick<Vehicle, "vin" | "current_station"> | null;
+  reporter: { display_name: string } | null;
 };

@@ -24,14 +24,15 @@ function Home() {
   const nav = useNavigate();
   const [requesting, setRequesting] = useState<string | null>(null);
 
-  const [stats, setStats] = useState<{ total: number; inProduction: number; openShortages: number } | null>(null);
+  const [stats, setStats] = useState<{ total: number; inProduction: number; openShortages: number; openIssues: number } | null>(null);
   const [stationCounts, setStationCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     (async () => {
-      const [{ data: vs }, { count: shortageCount }] = await Promise.all([
+      const [{ data: vs }, { count: shortageCount }, { count: issueCount }] = await Promise.all([
         supabase.from("vehicles").select("current_station"),
         supabase.from("shortages").select("id", { count: "exact", head: true }).eq("status", "open"),
+        supabase.from("issues").select("id", { count: "exact", head: true }).in("status", ["open", "in_progress"]),
       ]);
       const vehicles = vs ?? [];
       const counts: Record<string, number> = {};
@@ -43,6 +44,7 @@ function Home() {
         total: vehicles.length,
         inProduction: vehicles.filter(v => v.current_station && v.current_station !== "warehouse" && v.current_station !== "pdi").length,
         openShortages: shortageCount ?? 0,
+        openIssues: issueCount ?? 0,
       });
     })();
   }, []);
@@ -65,10 +67,11 @@ function Home() {
       </div>
 
       {stats && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatCard label="Total vehicles" value={stats.total} />
           <StatCard label="In production" value={stats.inProduction} />
           <StatCard label="Open shortages" value={stats.openShortages} tone={stats.openShortages > 0 ? "warning" : "success"} />
+          <StatCard label="Open issues" value={stats.openIssues} tone={stats.openIssues > 0 ? "warning" : "success"} />
         </div>
       )}
 

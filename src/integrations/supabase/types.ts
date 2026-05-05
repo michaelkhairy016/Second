@@ -106,6 +106,76 @@ export type Database = {
         }
         Relationships: []
       }
+      issues: {
+        Row: {
+          assigned_to: string | null
+          created_at: string
+          description: string | null
+          id: string
+          reported_by: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          severity: Database["public"]["Enums"]["issue_severity"]
+          station: Database["public"]["Enums"]["station_code"]
+          status: Database["public"]["Enums"]["issue_status"]
+          title: string
+          updated_at: string
+          vehicle_id: string | null
+        }
+        Insert: {
+          assigned_to?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          reported_by?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity?: Database["public"]["Enums"]["issue_severity"]
+          station: Database["public"]["Enums"]["station_code"]
+          status?: Database["public"]["Enums"]["issue_status"]
+          title: string
+          updated_at?: string
+          vehicle_id?: string | null
+        }
+        Update: {
+          assigned_to?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          reported_by?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity?: Database["public"]["Enums"]["issue_severity"]
+          station?: Database["public"]["Enums"]["station_code"]
+          status?: Database["public"]["Enums"]["issue_status"]
+          title?: string
+          updated_at?: string
+          vehicle_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "issues_vehicle_id_fkey"
+            columns: ["vehicle_id"]
+            isOneToOne: false
+            referencedRelation: "vehicles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "issues_reported_by_fkey"
+            columns: ["reported_by"]
+            isOneToOne: false
+            referencedRelation: "auth.users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "issues_assigned_to_fkey"
+            columns: ["assigned_to"]
+            isOneToOne: false
+            referencedRelation: "auth.users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       shortages: {
         Row: {
           cleared_at: string | null
@@ -356,6 +426,8 @@ export type Database = {
       access_request_status: "pending" | "approved" | "denied"
       app_role: "superuser" | "technician" | "staff"
       event_kind: "in" | "out"
+      issue_severity: "low" | "medium" | "high" | "critical"
+      issue_status: "open" | "in_progress" | "resolved" | "closed"
       lot_status: "pending" | "active" | "completed"
       shortage_status: "open" | "cleared"
       station_code:
@@ -497,6 +569,8 @@ export const Constants = {
       access_request_status: ["pending", "approved", "denied"],
       app_role: ["superuser", "technician", "staff"],
       event_kind: ["in", "out"],
+      issue_severity: ["low", "medium", "high", "critical"],
+      issue_status: ["open", "in_progress", "resolved", "closed"],
       lot_status: ["pending", "active", "completed"],
       shortage_status: ["open", "cleared"],
       station_code: [

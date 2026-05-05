@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
 import { useNotifications } from "@/hooks/use-notifications";
-import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Workflow, Search, Menu } from "lucide-react";
+import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Workflow, Search, Menu, AlertCircle } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import type { ReactNode } from "react";
@@ -27,6 +27,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {link("/", "Stations", LayoutGrid)}
       {link("/lookup", "Lookup", Search)}
       {link("/requests", "My Requests", ClipboardList)}
+      {link("/issues", "Issues", AlertCircle)}
       {isSuperuser && link("/analytics", "Analytics", BarChart3)}
       {isSuperuser && link("/admin", "Admin", Users)}
     </>
