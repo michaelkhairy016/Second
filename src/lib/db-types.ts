@@ -1,0 +1,47 @@
+import type { Database, Enums, Tables, TablesInsert, TablesUpdate } from "@/integrations/supabase/types";
+
+// Row types
+export type Vehicle = Tables<"vehicles">;
+export type StationEvent = Tables<"station_events">;
+export type Shortage = Tables<"shortages">;
+export type Lot = Tables<"lots">;
+export type JobOrder = Tables<"job_orders">;
+export type Profile = Tables<"profiles">;
+export type UserRole = Tables<"user_roles">;
+export type StationAssignment = Tables<"station_assignments">;
+export type StationAccessRequest = Tables<"station_access_requests">;
+
+// Insert types
+export type VehicleInsert = TablesInsert<"vehicles">;
+export type StationEventInsert = TablesInsert<"station_events">;
+export type ShortageInsert = TablesInsert<"shortages">;
+
+// Update types
+export type VehicleUpdate = TablesUpdate<"vehicles">;
+export type StationEventUpdate = TablesUpdate<"station_events">;
+
+// Enum types
+export type StationCode = Enums<"station_code">;
+export type AppRole = Enums<"app_role">;
+export type EventKind = Enums<"event_kind">;
+export type ShortageStatus = Enums<"shortage_status">;
+export type AccessRequestStatus = Enums<"access_request_status">;
+export type LotStatus = Enums<"lot_status">;
+
+// Joined types used across routes
+export type ShortageWithVehicle = Shortage & {
+  vehicle: Pick<Vehicle, "vin" | "current_station"> | null;
+};
+
+export type StationEventWithVehicle = Pick<StationEvent, "id" | "kind" | "color_used" | "recorded_at"> & {
+  vehicle: { vin: string } | null;
+};
+
+export type VehicleSearchResult = Pick<
+  Vehicle,
+  "id" | "vin" | "vin_suffix" | "planned_color" | "actual_color" | "current_station" | "lot_id" | "job_order_id" | "is_lot_tail" | "tail_note"
+>;
+
+export type AccessRequestWithProfile = StationAccessRequest & {
+  profile: { display_name: string } | null;
+};
