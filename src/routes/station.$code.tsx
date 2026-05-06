@@ -2,10 +2,11 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { RequireAuth } from "@/components/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/lib/auth-context";
-import { stationByCode, COLOR_CODES, type StationCode } from "@/lib/stations";
+import { stationByCode, COLOR_CODES } from "@/lib/stations";
 import { useEffect, useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -15,8 +16,8 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { findBySuffix } from "@/lib/vin";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList } from "lucide-react";
-import type { StationEventWithVehicle } from "@/lib/db-types";
+import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, FileSpreadsheet } from "lucide-react";
+import type { StationEventWithVehicle, StationCode } from "@/lib/db-types";
 
 export const Route = createFileRoute("/station/$code")({
   head: ({ params }) => ({ meta: [{ title: `${stationByCode(params.code)?.label ?? "Station"} — Nexus-Flow` }] }),
@@ -49,6 +50,8 @@ function StationPage() {
       </div>
 
       <ScanForm station={station.code} />
+      {station.code === "wbs" && <BulkPasteSection station="wbs" />}
+      {station.code === "pbs" && <PBSLotSummary />}
       <RecentEvents station={station.code} />
     </div>
   );
@@ -61,6 +64,14 @@ function ScanForm({ station }: { station: StationCode }) {
   const [picked, setPicked] = useState<typeof matches[number] | null>(null);
   const [color, setColor] = useState("");
   const [busy, setBusy] = useState(false);
+  const [lotCode, setLotCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (picked?.lot_id && station === "pbs") {
+      supabase.from("lots").select("lot_code").eq("id", picked.lot_id).maybeSingle()
+        .then(({ data }) => setLotCode(data?.lot_code ?? null));
+    } else { setLotCode(null); }
+  }, [picked?.lot_id, station]);
 
   useEffect(() => {
     if (debouncedSuffix.trim().length < 3) { setMatches([]); return; }
@@ -98,7 +109,7 @@ function ScanForm({ station }: { station: StationCode }) {
       });
       if (error) throw error;
 
-      const update: Record<string, string> = { current_station: station };
+      const update: { current_station: typeof station; actual_color?: string } = { current_station: station };
       if (station === "paint" && kind === "in" && color) update.actual_color = color;
       await supabase.from("vehicles").update(update).eq("id", picked.id);
 
@@ -138,6 +149,11 @@ function ScanForm({ station }: { station: StationCode }) {
             <div className="text-xs text-muted-foreground">
               At <b>{picked.current_station ?? "—"}</b> · Plan: {picked.planned_color ?? "—"} · Actual: {picked.actual_color ?? "—"}
             </div>
+            {lotCode && (
+              <div className="flex items-center gap-1.5 text-xs mt-1">
+                <Badge variant="info">Lot: {lotCode}</Badge>
+              </div>
+            )}
             {picked.is_lot_tail && (
               <div className="flex items-center gap-1 text-warning text-xs"><AlertTriangle className="h-3 w-3" /> Lot-tail flag: {picked.tail_note}</div>
             )}
@@ -214,6 +230,123 @@ function RecentEvents({ station }: { station: StationCode }) {
             ))}
           </ul>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function BulkPasteSection({ station }: { station: StationCode }) {
+  const [text, setText] = useState("");
+  const [kind, setKind] = useState<"in" | "out">("in");
+  const [busy, setBusy] = useState(false);
+  const [report, setReport] = useState<{ matched: number; missing: string[] } | null>(null);
+  const [showBulk, setShowBulk] = useState(false);
+
+  const run = async () => {
+    setBusy(true); setReport(null);
+    try {
+      const tokens = text.split(/\s+|[,;]/).map(s => s.trim().toUpperCase()).filter(Boolean);
+      if (tokens.length === 0) throw new Error("Paste at least one VIN or suffix");
+
+      const matched: { id: string; vin: string }[] = [];
+      const missing: string[] = [];
+      for (const t of tokens) {
+        const q = t.length === 17
+          ? supabase.from("vehicles").select("id, vin").eq("vin", t).maybeSingle()
+          : supabase.from("vehicles").select("id, vin").ilike("vin_suffix", `%${t.slice(-5)}`).limit(1).maybeSingle();
+        const { data } = await q;
+        if (data) matched.push(data); else missing.push(t);
+      }
+      if (matched.length === 0) throw new Error("No vehicles found");
+
+      const user = (await supabase.auth.getUser()).data.user;
+      const events = matched.map(m => ({ vehicle_id: m.id, station, kind, recorded_by: user?.id, source: "bulk" }));
+      const { error: ee } = await supabase.from("station_events").insert(events);
+      if (ee) throw ee;
+      await supabase.from("vehicles").update({ current_station: station }).in("id", matched.map(m => m.id));
+      setReport({ matched: matched.length, missing });
+      toast.success(`Updated ${matched.length} vehicles`);
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+
+  if (!showBulk) {
+    return (
+      <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => setShowBulk(true)}>
+        <CardContent className="py-4 flex items-center gap-3">
+          <div className="h-9 w-9 rounded-lg bg-info/10 text-info grid place-items-center"><FileSpreadsheet className="h-5 w-5" /></div>
+          <div><div className="text-sm font-medium">Bulk paste from Excel</div><div className="text-xs text-muted-foreground">Paste multiple VINs at once</div></div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base flex items-center gap-2"><FileSpreadsheet className="h-4 w-4" />Bulk paste from Excel</CardTitle></CardHeader>
+      <CardContent className="space-y-3">
+        <Textarea rows={8} value={text} onChange={e => setText(e.target.value)} placeholder="Paste one VIN per line — full VINs or suffixes" className="font-mono text-xs" />
+        <div className="flex gap-2 items-center">
+          <Label className="text-sm">Direction</Label>
+          <select value={kind} onChange={e => setKind(e.target.value as "in" | "out")} className="border rounded-md px-2 py-1 text-sm bg-background">
+            <option value="in">IN to WBS (Body)</option>
+            <option value="out">OUT of WBS (Body)</option>
+          </select>
+          <Button className="ml-auto" disabled={busy} onClick={run}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply to all"}</Button>
+        </div>
+        {report && (
+          <div className="text-sm space-y-1 pt-2 border-t">
+            <div className="text-success">Matched: {report.matched}</div>
+            {report.missing.length > 0 && <details><summary className="text-warning text-xs cursor-pointer">Not found: {report.missing.length}</summary><div className="font-mono text-xs mt-1">{report.missing.join("\n")}</div></details>}
+          </div>
+        )}
+        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => { setShowBulk(false); setText(""); setReport(null); }}>Close</Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PBSLotSummary() {
+  const [groups, setGroups] = useState<{ lot_code: string; model: string; count: number }[]>([]);
+
+  useEffect(() => {
+    const load = async () => {
+      const { data } = await supabase
+        .from("vehicles")
+        .select("id, lot:lots(lot_code, model)")
+        .eq("current_station", "pbs");
+      const map = new Map<string, { lot_code: string; model: string; count: number }>();
+      (data ?? []).forEach((v: any) => {
+        const key = v.lot?.lot_code ?? "Unassigned";
+        const existing = map.get(key);
+        if (existing) existing.count++;
+        else map.set(key, { lot_code: key, model: v.lot?.model ?? "—", count: 1 });
+      });
+      setGroups(Array.from(map.values()).sort((a, b) => b.count - a.count));
+    };
+    load();
+    const ch = supabase.channel("pbs-lots")
+      .on("postgres_changes", { event: "*", schema: "public", table: "vehicles", filter: "current_station=eq.pbs" }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, []);
+
+  if (groups.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">PBS by Lot</CardTitle></CardHeader>
+      <CardContent>
+        <ul className="divide-y text-sm">
+          {groups.map(g => (
+            <li key={g.lot_code} className="py-2 flex items-center justify-between">
+              <div>
+                <span className="font-medium">{g.lot_code}</span>
+                <span className="text-muted-foreground"> · {g.model}</span>
+              </div>
+              <Badge variant="secondary">{g.count} bod{g.count !== 1 ? "ies" : "y"}</Badge>
+            </li>
+          ))}
+        </ul>
       </CardContent>
     </Card>
   );

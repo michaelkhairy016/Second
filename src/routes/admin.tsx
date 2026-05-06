@@ -26,9 +26,10 @@ export const Route = createFileRoute("/admin")({
 });
 
 function Page() {
-  const { isSuperuser } = useAuth();
+  const { isSuperuser, isStaff } = useAuth();
   const nav = useNavigate();
-  useEffect(() => { if (!isSuperuser) nav({ to: "/" }); }, [isSuperuser, nav]);
+  const isAdmin = isSuperuser || isStaff;
+  useEffect(() => { if (!isAdmin) nav({ to: "/" }); }, [isAdmin, nav]);
 
   const [reqs, setReqs] = useState<AccessRequestWithProfile[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -93,28 +94,30 @@ function Page() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Users ({users.length})</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          {users.length === 0 ? <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div> : users.map(u => (
-            <div key={u.id} className="border rounded-md p-3 space-y-2">
-              <div className="font-medium text-sm">{u.display_name}</div>
-              <div className="flex flex-wrap gap-1.5">
-                {(["superuser","technician","staff"] as const).map(r => {
-                  const on = u.roles.includes(r);
-                  return <button key={r} onClick={() => setRole(u.id, r, !on)}><Badge variant={on ? "info" : "muted"}>{r}</Badge></button>;
-                })}
+      {isSuperuser && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">Users ({users.length})</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            {users.length === 0 ? <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div> : users.map(u => (
+              <div key={u.id} className="border rounded-md p-3 space-y-2">
+                <div className="font-medium text-sm">{u.display_name}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {(["superuser","technician","staff"] as const).map(r => {
+                    const on = u.roles.includes(r);
+                    return <button key={r} onClick={() => setRole(u.id, r, !on)}><Badge variant={on ? "info" : "muted"}>{r}</Badge></button>;
+                  })}
+                </div>
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {STATIONS.map(s => {
+                    const on = u.stations.includes(s.code);
+                    return <button key={s.code} onClick={() => toggleStation(u.id, s.code, !on)}><Badge variant={on ? "success" : "muted"}>{s.short}</Badge></button>;
+                  })}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {STATIONS.map(s => {
-                  const on = u.stations.includes(s.code);
-                  return <button key={s.code} onClick={() => toggleStation(u.id, s.code, !on)}><Badge variant={on ? "success" : "muted"}>{s.short}</Badge></button>;
-                })}
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+            ))}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

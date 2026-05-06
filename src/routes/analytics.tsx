@@ -46,16 +46,21 @@ function Page() {
   const [openIssues, setOpenIssues] = useState(0);
   const [trendData, setTrendData] = useState<{ date: string; moved: number }[]>([]);
   const [stationFlow, setStationFlow] = useState<{ station: string; ins: number; outs: number }[]>([]);
+  const [modelCounts, setModelCounts] = useState<{ model: string; total: number; inProd: number; completed: number }[]>([]);
+  const [wipRows, setWipRows] = useState<{ station: string; count: number; openIssues: number; openShortages: number }[]>([]);
 
   const load = useCallback(async () => {
     const rangeStart = getRangeStart(timeRange);
 
-    const [vsRes, shortagesRes, issuesRes, eventsRes, resolvedRes] = await Promise.all([
-      supabase.from("vehicles").select("current_station, planned_color, actual_color"),
+    const [vsRes, shortagesRes, issuesRes, eventsRes, resolvedRes, lotsRes, issuesByVehicleRes, shortagesByVehicleRes] = await Promise.all([
+      supabase.from("vehicles").select("current_station, planned_color, actual_color, job_order_id"),
       supabase.from("shortages").select("id", { count: "exact", head: true }).eq("status", "open"),
       supabase.from("issues").select("id", { count: "exact", head: true }).in("status", ["open", "in_progress"]),
       supabase.from("station_events").select("station, kind, recorded_at").gte("recorded_at", rangeStart.toISOString()),
       supabase.from("issues").select("id", { count: "exact", head: true }).gte("resolved_at", rangeStart.toISOString()),
+      supabase.from("lots").select("id, model"),
+      supabase.from("issues").select("id, vehicle_id").in("status", ["open", "in_progress"]),
+      supabase.from("shortages").select("id, vehicle_id").eq("status", "open"),
     ]);
 
     const vs = vsRes.data ?? [];
@@ -105,6 +110,33 @@ function Page() {
       trendDays.push({ date: dayLabel, moved: dayEvents.length });
     }
     setTrendData(trendDays);
+
+    // Model counts — join vehicles to lots via job_orders
+    const lots = lotsRes.data ?? [];
+    const lotMap = Object.fromEntries(lots.map(l => [l.id, l.model]));
+    // We need vehicles with lot_id to resolve model
+    const { data: vsWithLot } = await supabase.from("vehicles").select("id, lot_id, current_station");
+    const vLot = vsWithLot ?? [];
+    const modelMap: Record<string, { total: number; inProd: number; completed: number }> = {};
+    vLot.forEach(v => {
+      const model = (v.lot_id && lotMap[v.lot_id]) ?? "Unknown";
+      if (!modelMap[model]) modelMap[model] = { total: 0, inProd: 0, completed: 0 };
+      modelMap[model].total++;
+      if (v.current_station && v.current_station !== "warehouse" && v.current_station !== "pdi") modelMap[model].inProd++;
+      if (v.current_station === "pdi") modelMap[model].completed++;
+    });
+    setModelCounts(Object.entries(modelMap).map(([model, counts]) => ({ model, ...counts })));
+
+    // WIP table — vehicles per station (excluding warehouse and PDI) with issues and shortages
+    const issueVehicleSet = new Set((issuesByVehicleRes.data ?? []).map(i => i.vehicle_id).filter(Boolean) as string[]);
+    const shortageVehicleSet = new Set((shortagesByVehicleRes.data ?? []).map(s => s.vehicle_id).filter(Boolean) as string[]);
+    const wipStations = STATIONS.filter(s => s.code !== "warehouse" && s.code !== "pdi");
+    setWipRows(wipStations.map(s => {
+      const stationVehicles = vLot.filter(v => v.current_station === s.code);
+      const openIssues = stationVehicles.filter(v => issueVehicleSet.has(v.id)).length;
+      const openShortages = stationVehicles.filter(v => shortageVehicleSet.has(v.id)).length;
+      return { station: s.label, count: stationVehicles.length, openIssues, openShortages };
+    }));
   }, [timeRange]);
 
   useEffect(() => { load(); }, [load]);
@@ -217,6 +249,70 @@ function Page() {
               ))}
             </TableBody>
           </Table>
+        </CardContent>
+      </Card>
+
+      {/* Models breakdown */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Models breakdown</CardTitle></CardHeader>
+        <CardContent>
+          {modelCounts.length === 0 ? <p className="text-xs text-muted-foreground">No model data yet.</p> : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Model</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="text-right">In Production</TableHead>
+                  <TableHead className="text-right">Completed (PDI)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {modelCounts.map(row => (
+                  <TableRow key={row.model}>
+                    <TableCell className="font-medium">{row.model}</TableCell>
+                    <TableCell className="text-right">{row.total}</TableCell>
+                    <TableCell className="text-right">{row.inProd}</TableCell>
+                    <TableCell className="text-right">{row.completed}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* WIP table */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">WIP — Work In Progress</CardTitle></CardHeader>
+        <CardContent>
+          {wipRows.every(r => r.count === 0) ? <p className="text-xs text-muted-foreground">No vehicles in production.</p> : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Station</TableHead>
+                  <TableHead className="text-right">Vehicles</TableHead>
+                  <TableHead className="text-right">Open Issues</TableHead>
+                  <TableHead className="text-right">Open Shortages</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {wipRows.map(row => (
+                  <TableRow key={row.station}>
+                    <TableCell className="font-medium">{row.station}</TableCell>
+                    <TableCell className="text-right">{row.count}</TableCell>
+                    <TableCell className="text-right">{row.openIssues > 0 ? <span className="text-warning">{row.openIssues}</span> : row.openIssues}</TableCell>
+                    <TableCell className="text-right">{row.openShortages > 0 ? <span className="text-warning">{row.openShortages}</span> : row.openShortages}</TableCell>
+                  </TableRow>
+                ))}
+                <TableRow className="font-semibold border-t-2">
+                  <TableCell>Total WIP</TableCell>
+                  <TableCell className="text-right">{wipRows.reduce((a, b) => a + b.count, 0)}</TableCell>
+                  <TableCell className="text-right">{wipRows.reduce((a, b) => a + b.openIssues, 0)}</TableCell>
+                  <TableCell className="text-right">{wipRows.reduce((a, b) => a + b.openShortages, 0)}</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>

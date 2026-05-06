@@ -14,6 +14,51 @@ export type Database = {
   }
   public: {
     Tables: {
+      engines: {
+        Row: {
+          created_at: string
+          engine_number: string
+          engine_suffix: string
+          id: string
+          job_order_id: string | null
+          lot_id: string | null
+          status: Database["public"]["Enums"]["engine_status"]
+        }
+        Insert: {
+          created_at?: string
+          engine_number: string
+          engine_suffix: string
+          id?: string
+          job_order_id?: string | null
+          lot_id?: string | null
+          status?: Database["public"]["Enums"]["engine_status"]
+        }
+        Update: {
+          created_at?: string
+          engine_number?: string
+          engine_suffix?: string
+          id?: string
+          job_order_id?: string | null
+          lot_id?: string | null
+          status?: Database["public"]["Enums"]["engine_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "engines_job_order_id_fkey"
+            columns: ["job_order_id"]
+            isOneToOne: false
+            referencedRelation: "job_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "engines_lot_id_fkey"
+            columns: ["lot_id"]
+            isOneToOne: false
+            referencedRelation: "lots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       factory_snapshots: {
         Row: {
           created_at: string
@@ -527,6 +572,7 @@ export type Database = {
     Enums: {
       access_request_status: "pending" | "approved" | "denied"
       app_role: "superuser" | "technician" | "staff"
+      engine_status: "available" | "assigned" | "installed"
       event_kind: "in" | "out"
       issue_severity: "low" | "medium" | "high" | "critical"
       issue_status: "open" | "in_progress" | "resolved" | "closed"
@@ -670,6 +716,7 @@ export const Constants = {
     Enums: {
       access_request_status: ["pending", "approved", "denied"],
       app_role: ["superuser", "technician", "staff"],
+      engine_status: ["available", "assigned", "installed"],
       event_kind: ["in", "out"],
       issue_severity: ["low", "medium", "high", "critical"],
       issue_status: ["open", "in_progress", "resolved", "closed"],

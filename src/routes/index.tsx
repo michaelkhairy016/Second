@@ -56,7 +56,7 @@ function Home() {
       station: station as "warehouse" | "wbs" | "paint" | "pbs" | "shortage" | "repair" | "cs" | "pdi",
     });
     setRequesting(null);
-    if (error) toast.error(error.message); else toast.success("Request sent to superuser");
+    if (error) toast.error(error.message); else toast.success("Request sent for approval");
   };
 
   return (

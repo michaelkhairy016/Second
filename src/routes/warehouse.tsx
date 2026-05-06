@@ -121,7 +121,7 @@ function NewLot({ onDone }: { onDone: () => void }) {
 
 function NewJobOrder({ lots, onDone }: { lots: Lot[]; onDone: () => void }) {
   const [lotId, setLotId] = useState(""); const [code, setCode] = useState(""); const [units, setUnits] = useState(25);
-  const [vins, setVins] = useState(""); const [colorPlan, setColorPlan] = useState("11U:10\n55U:15"); const [busy, setBusy] = useState(false);
+  const [vins, setVins] = useState(""); const [engines, setEngines] = useState(""); const [colorPlan, setColorPlan] = useState("11U:10\n55U:15"); const [busy, setBusy] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setBusy(true);
@@ -149,8 +149,23 @@ function NewJobOrder({ lots, onDone }: { lots: Lot[]; onDone: () => void }) {
       }));
       const { error: ve } = await supabase.from("vehicles").insert(rows);
       if (ve) throw ve;
-      toast.success("Job order + vehicles created");
-      setCode(""); setVins(""); onDone();
+
+      // Create engines if provided
+      const engineList = engines.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length >= 4);
+      if (engineList.length > 0) {
+        const engineRows = engineList.map(en => ({
+          engine_number: en,
+          engine_suffix: en.slice(-4),
+          lot_id: lotId,
+          job_order_id: jo.id,
+          status: "available" as const,
+        }));
+        const { error: ee } = await supabase.from("engines").insert(engineRows);
+        if (ee) throw ee;
+      }
+
+      toast.success(`Job order + ${vinList.length} vehicles${engineList.length > 0 ? ` + ${engineList.length} engines` : ""} created`);
+      setCode(""); setVins(""); setEngines(""); onDone();
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
 
@@ -170,6 +185,7 @@ function NewJobOrder({ lots, onDone }: { lots: Lot[]; onDone: () => void }) {
           <div className="space-y-1.5"><Label>Units</Label><Input type="number" min={1} value={units} onChange={e => setUnits(+e.target.value)} required /></div>
           <div className="space-y-1.5"><Label>Color plan (CODE:count per line)</Label><Textarea value={colorPlan} onChange={e => setColorPlan(e.target.value)} className="font-mono text-xs" rows={4} /></div>
           <div className="space-y-1.5"><Label>VINs (one per line, 17 chars)</Label><Textarea value={vins} onChange={e => setVins(e.target.value)} className="font-mono text-xs" rows={4} /></div>
+          <div className="space-y-1.5"><Label>Engine numbers (one per line, from Excel)</Label><Textarea value={engines} onChange={e => setEngines(e.target.value)} className="font-mono text-xs" rows={3} placeholder="Paste engine numbers, one per line" /></div>
           <Button disabled={busy} type="submit" className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create job order"}</Button>
           <p className="text-xs text-muted-foreground">Codes: {Object.entries(COLOR_CODES).map(([k,v]) => `${k}=${v}`).join(", ")}</p>
         </form>

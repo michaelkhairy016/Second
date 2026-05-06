@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import type { ReactNode } from "react";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { displayName, roles, signOut, isSuperuser } = useAuth();
+  const { displayName, roles, signOut, isSuperuser, isStaff } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
 
@@ -30,7 +30,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {link("/requests", "My Requests", ClipboardList)}
       {link("/issues", "Issues", AlertCircle)}
       {isSuperuser && link("/analytics", "Analytics", BarChart3)}
-      {isSuperuser && link("/admin", "Admin", Users)}
+      {(isSuperuser || isStaff) && link("/admin", "Admin", Users)}
       {isSuperuser && link("/settings", "Settings", Settings)}
     </>
   );
@@ -88,7 +88,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {link("/requests", "Requests", ClipboardList)}
           {link("/issues", "Issues", AlertCircle)}
           {isSuperuser && link("/analytics", "Analytics", BarChart3)}
-          {isSuperuser && link("/admin", "Admin", Users)}
+          {(isSuperuser || isStaff) && link("/admin", "Admin", Users)}
           {isSuperuser && link("/settings", "Settings", Settings)}
         </nav>
       </header>

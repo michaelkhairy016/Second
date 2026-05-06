@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Workflow, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
 import { loginSchema, signupSchema } from "@/lib/schemas";
@@ -69,9 +69,9 @@ function LoginPage() {
   return (
     <div className="min-h-screen grid place-items-center bg-background p-4">
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-2 justify-center mb-6">
-          <div className="h-9 w-9 rounded-lg bg-primary text-primary-foreground grid place-items-center"><Workflow className="h-5 w-5" /></div>
-          <div className="text-xl font-semibold">Nexus-Flow</div>
+        <div className="flex flex-col items-center gap-3 mb-6">
+          <img src="/ezgif.com-video-to-gif.gif" alt="Production process" className="w-full max-w-xs rounded-lg" />
+          <h1 className="text-2xl font-bold text-center">Aboulfotouh Shopfloor System</h1>
         </div>
         <Card>
           <CardHeader>

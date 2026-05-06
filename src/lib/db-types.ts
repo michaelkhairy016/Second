@@ -1,5 +1,12 @@
 import type { Database, Enums, Tables, TablesInsert, TablesUpdate } from "@/integrations/supabase/types";
 
+// Engine types
+export type Engine = Tables<"engines">;
+export type EngineStatus = Enums<"engine_status">;
+export type EngineSearchResult = Pick<Engine, "id" | "engine_number" | "engine_suffix" | "lot_id" | "job_order_id" | "status"> & {
+  lot: { lot_code: string; model: string } | null;
+};
+
 // Row types
 export type Vehicle = Tables<"vehicles">;
 export type StationEvent = Tables<"station_events">;

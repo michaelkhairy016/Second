@@ -1,24 +1,52 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { RequireAuth } from "@/components/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, Search } from "lucide-react";
 import { useState } from "react";
 import { findBySuffix } from "@/lib/vin";
-import type { VehicleSearchResult } from "@/lib/db-types";
+import { findEngineBySuffix } from "@/lib/engine";
+import type { VehicleSearchResult, EngineSearchResult } from "@/lib/db-types";
 import { supabase } from "@/integrations/supabase/client";
 import { stationByCode } from "@/lib/stations";
 
 export const Route = createFileRoute("/lookup")({
-  head: () => ({ meta: [{ title: "Vehicle Lookup — Nexus-Flow" }] }),
+  head: () => ({ meta: [{ title: "Lookup — Nexus-Flow" }] }),
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
 });
 
 function Page() {
   const nav = useNavigate();
+
+  return (
+    <div className="space-y-4 max-w-2xl mx-auto">
+      <button onClick={() => nav({ to: "/" })} className="text-sm text-muted-foreground inline-flex items-center gap-1 hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Stations</button>
+      <div>
+        <h1 className="text-2xl font-semibold">Lookup</h1>
+        <p className="text-muted-foreground text-sm">Search vehicles by VIN or engines by number.</p>
+      </div>
+
+      <Tabs defaultValue="vehicle">
+        <TabsList className="w-full">
+          <TabsTrigger value="vehicle" className="flex-1">Vehicle</TabsTrigger>
+          <TabsTrigger value="engine" className="flex-1">Engine</TabsTrigger>
+        </TabsList>
+        <TabsContent value="vehicle">
+          <VehicleLookup />
+        </TabsContent>
+        <TabsContent value="engine">
+          <EngineLookup />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function VehicleLookup() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<VehicleSearchResult[]>([]);
   const [selected, setSelected] = useState<VehicleSearchResult | null>(null);
@@ -45,14 +73,8 @@ function Page() {
   };
 
   return (
-    <div className="space-y-4 max-w-2xl mx-auto">
-      <button onClick={() => nav({ to: "/" })} className="text-sm text-muted-foreground inline-flex items-center gap-1 hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Stations</button>
-      <div>
-        <h1 className="text-2xl font-semibold">Vehicle Lookup</h1>
-        <p className="text-muted-foreground text-sm">Search by VIN or last 5 digits.</p>
-      </div>
-
-      <div className="flex gap-2">
+    <div className="space-y-4">
+      <div className="flex gap-2 mt-4">
         <div className="flex-1">
           <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Enter VIN or suffix..." className="font-mono" onKeyDown={e => e.key === "Enter" && handleSearch()} />
         </div>
@@ -129,6 +151,60 @@ function Page() {
             <button onClick={() => { setSelected(null); setEvents([]); }} className="text-sm text-muted-foreground hover:text-foreground">Back to results</button>
           </CardContent>
         </Card>
+      )}
+    </div>
+  );
+}
+
+function EngineLookup() {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<EngineSearchResult[]>([]);
+
+  const handleSearch = async () => {
+    const q = query.trim();
+    if (q.length < 3) return;
+    const data = await findEngineBySuffix(q);
+    setResults(data as EngineSearchResult[]);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1.5 mt-4">
+        <Label>Engine number or last 4+ digits</Label>
+        <div className="flex gap-2">
+          <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="e.g. 4567" className="font-mono" onKeyDown={e => e.key === "Enter" && handleSearch()} />
+          <button onClick={handleSearch} className="h-9 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 flex items-center gap-2">
+            <Search className="h-4 w-4" /> Search
+          </button>
+        </div>
+      </div>
+
+      {results.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">{results.length} engine{results.length !== 1 ? "s" : ""} found</CardTitle></CardHeader>
+          <CardContent>
+            <ul className="divide-y">
+              {results.map(e => (
+                <li key={e.id} className="py-3 flex items-center justify-between text-sm">
+                  <div className="space-y-1">
+                    <div className="font-mono font-medium">{e.engine_number}</div>
+                    <div className="text-xs text-muted-foreground">
+                      Lot: <b>{(e as any).lot?.lot_code ?? "—"}</b>
+                      {(e as any).lot?.model && <span> · {(e as any).lot.model}</span>}
+                    </div>
+                  </div>
+                  <Badge variant={e.status === "available" ? "success" : e.status === "assigned" ? "info" : "muted"}>
+                    {e.status}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {results.length === 0 && query.length >= 3 && (
+        <p className="text-sm text-muted-foreground text-center py-4">No engines found for "{query}"</p>
       )}
     </div>
   );

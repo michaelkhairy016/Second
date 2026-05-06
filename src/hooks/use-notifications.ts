@@ -4,15 +4,15 @@ import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 
 export function useNotifications() {
-  const { user, isSuperuser, hasStation } = useAuth();
+  const { user, isSuperuser, isStaff, hasStation } = useAuth();
 
   useEffect(() => {
     if (!user) return;
 
     const channels: ReturnType<typeof supabase.channel>[] = [];
 
-    // Superuser: notify on new access requests
-    if (isSuperuser) {
+    // Superuser + Staff: notify on new access requests
+    if (isSuperuser || isStaff) {
       const ch = supabase.channel("notif-requests")
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "station_access_requests" }, () => {
           toast.info("New access request received");
