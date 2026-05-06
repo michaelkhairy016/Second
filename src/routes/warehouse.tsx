@@ -11,9 +11,10 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/EmptyState";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Boxes, ClipboardList, Loader2, Plus } from "lucide-react";
+import { ArrowLeft, Boxes, ClipboardList, Loader2, Plus, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { COLOR_CODES } from "@/lib/stations";
+import { JobOrderPrintView } from "@/components/JobOrderPrintView";
 import type { Lot, JobOrder } from "@/lib/db-types";
 
 export const Route = createFileRoute("/warehouse")({
@@ -28,6 +29,15 @@ function Page() {
 
   const [lots, setLots] = useState<Lot[]>([]);
   const [jobs, setJobs] = useState<JobOrder[]>([]);
+  const [printJob, setPrintJob] = useState<JobOrder | null>(null);
+  const [printLot, setPrintLot] = useState<Lot | null>(null);
+
+  const handlePrint = async (job: JobOrder) => {
+    const { data: lot } = await supabase.from("lots").select("*").eq("id", job.lot_id).maybeSingle();
+    setPrintJob(job);
+    setPrintLot(lot);
+    setTimeout(() => window.print(), 150);
+  };
   const reload = async () => {
     const [{ data: l }, { data: j }] = await Promise.all([
       supabase.from("lots").select("*").order("created_at", { ascending: false }),
@@ -67,15 +77,21 @@ function Page() {
           {jobs.length === 0 ? <EmptyState icon={ClipboardList} title="No job orders" description="Create a job order to split a lot into production runs." /> : (
             <ul className="divide-y text-sm">
               {jobs.map(j => (
-                <li key={j.id} className="py-2 flex justify-between">
+                <li key={j.id} className="py-2 flex justify-between items-center">
                   <span><b>{j.job_code}</b> · {j.units} cars</span>
-                  <span className="text-xs text-muted-foreground font-mono">{Object.entries(j.color_plan ?? {}).map(([k,v]) => `${k}:${v}`).join(" ")}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground font-mono">{Object.entries(j.color_plan ?? {}).map(([k,v]) => `${k}:${v}`).join(" ")}</span>
+                    <Button variant="outline" size="sm" className="h-7 no-print" onClick={() => handlePrint(j)}><Printer className="h-3.5 w-3.5 mr-1" />Print</Button>
+                  </div>
                 </li>
               ))}
             </ul>
           )}
         </CardContent>
       </Card>
+
+      {/* Print area — hidden on screen, visible only when printing */}
+      {printJob && <JobOrderPrintView jobOrder={printJob} lot={printLot} />}
     </div>
   );
 }

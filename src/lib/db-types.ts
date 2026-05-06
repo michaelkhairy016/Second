@@ -11,6 +11,10 @@ export type UserRole = Tables<"user_roles">;
 export type StationAssignment = Tables<"station_assignments">;
 export type StationAccessRequest = Tables<"station_access_requests">;
 export type Issue = Tables<"issues">;
+export type StandardColor = Tables<"standard_colors">;
+export type Model = Tables<"models">;
+export type ModelTrim = Tables<"model_trims">;
+export type FactorySnapshot = Tables<"factory_snapshots">;
 
 // Insert types
 export type VehicleInsert = TablesInsert<"vehicles">;
@@ -54,3 +58,5 @@ export type IssueWithVehicle = Issue & {
   vehicle: Pick<Vehicle, "vin" | "current_station"> | null;
   reporter: { display_name: string } | null;
 };
+
+export type ModelWithTrims = Model & { trims: ModelTrim[] };

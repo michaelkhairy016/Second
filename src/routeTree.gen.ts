@@ -11,8 +11,12 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WarehouseRouteImport } from './routes/warehouse'
 import { Route as ShortagesRouteImport } from './routes/shortages'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as RequestsRouteImport } from './routes/requests'
+import { Route as LookupRouteImport } from './routes/lookup'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as IssuesRouteImport } from './routes/issues'
+import { Route as FlowRouteImport } from './routes/flow'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
@@ -29,14 +33,34 @@ const ShortagesRoute = ShortagesRouteImport.update({
   path: '/shortages',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RequestsRoute = RequestsRouteImport.update({
   id: '/requests',
   path: '/requests',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LookupRoute = LookupRouteImport.update({
+  id: '/lookup',
+  path: '/lookup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IssuesRoute = IssuesRouteImport.update({
+  id: '/issues',
+  path: '/issues',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FlowRoute = FlowRouteImport.update({
+  id: '/flow',
+  path: '/flow',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AnalyticsRoute = AnalyticsRouteImport.update({
@@ -69,8 +93,12 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
+  '/flow': typeof FlowRoute
+  '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
+  '/lookup': typeof LookupRoute
   '/requests': typeof RequestsRoute
+  '/settings': typeof SettingsRoute
   '/shortages': typeof ShortagesRoute
   '/warehouse': typeof WarehouseRoute
   '/bulk/$code': typeof BulkCodeRoute
@@ -80,8 +108,12 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
+  '/flow': typeof FlowRoute
+  '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
+  '/lookup': typeof LookupRoute
   '/requests': typeof RequestsRoute
+  '/settings': typeof SettingsRoute
   '/shortages': typeof ShortagesRoute
   '/warehouse': typeof WarehouseRoute
   '/bulk/$code': typeof BulkCodeRoute
@@ -92,8 +124,12 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
+  '/flow': typeof FlowRoute
+  '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
+  '/lookup': typeof LookupRoute
   '/requests': typeof RequestsRoute
+  '/settings': typeof SettingsRoute
   '/shortages': typeof ShortagesRoute
   '/warehouse': typeof WarehouseRoute
   '/bulk/$code': typeof BulkCodeRoute
@@ -105,8 +141,12 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/analytics'
+    | '/flow'
+    | '/issues'
     | '/login'
+    | '/lookup'
     | '/requests'
+    | '/settings'
     | '/shortages'
     | '/warehouse'
     | '/bulk/$code'
@@ -116,8 +156,12 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/analytics'
+    | '/flow'
+    | '/issues'
     | '/login'
+    | '/lookup'
     | '/requests'
+    | '/settings'
     | '/shortages'
     | '/warehouse'
     | '/bulk/$code'
@@ -127,8 +171,12 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/analytics'
+    | '/flow'
+    | '/issues'
     | '/login'
+    | '/lookup'
     | '/requests'
+    | '/settings'
     | '/shortages'
     | '/warehouse'
     | '/bulk/$code'
@@ -139,8 +187,12 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
   AnalyticsRoute: typeof AnalyticsRoute
+  FlowRoute: typeof FlowRoute
+  IssuesRoute: typeof IssuesRoute
   LoginRoute: typeof LoginRoute
+  LookupRoute: typeof LookupRoute
   RequestsRoute: typeof RequestsRoute
+  SettingsRoute: typeof SettingsRoute
   ShortagesRoute: typeof ShortagesRoute
   WarehouseRoute: typeof WarehouseRoute
   BulkCodeRoute: typeof BulkCodeRoute
@@ -163,6 +215,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShortagesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/requests': {
       id: '/requests'
       path: '/requests'
@@ -170,11 +229,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RequestsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/lookup': {
+      id: '/lookup'
+      path: '/lookup'
+      fullPath: '/lookup'
+      preLoaderRoute: typeof LookupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/issues': {
+      id: '/issues'
+      path: '/issues'
+      fullPath: '/issues'
+      preLoaderRoute: typeof IssuesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/flow': {
+      id: '/flow'
+      path: '/flow'
+      fullPath: '/flow'
+      preLoaderRoute: typeof FlowRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/analytics': {
@@ -219,8 +299,12 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
   AnalyticsRoute: AnalyticsRoute,
+  FlowRoute: FlowRoute,
+  IssuesRoute: IssuesRoute,
   LoginRoute: LoginRoute,
+  LookupRoute: LookupRoute,
   RequestsRoute: RequestsRoute,
+  SettingsRoute: SettingsRoute,
   ShortagesRoute: ShortagesRoute,
   WarehouseRoute: WarehouseRoute,
   BulkCodeRoute: BulkCodeRoute,
@@ -229,3 +313,12 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}

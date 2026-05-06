@@ -14,95 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
-      job_orders: {
-        Row: {
-          color_plan: Json
-          created_at: string
-          id: string
-          job_code: string
-          lot_id: string
-          status: Database["public"]["Enums"]["lot_status"]
-          units: number
-          vin_sequence: string[]
-        }
-        Insert: {
-          color_plan?: Json
-          created_at?: string
-          id?: string
-          job_code: string
-          lot_id: string
-          status?: Database["public"]["Enums"]["lot_status"]
-          units: number
-          vin_sequence?: string[]
-        }
-        Update: {
-          color_plan?: Json
-          created_at?: string
-          id?: string
-          job_code?: string
-          lot_id?: string
-          status?: Database["public"]["Enums"]["lot_status"]
-          units?: number
-          vin_sequence?: string[]
-        }
-        Relationships: [
-          {
-            foreignKeyName: "job_orders_lot_id_fkey"
-            columns: ["lot_id"]
-            isOneToOne: false
-            referencedRelation: "lots"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      lots: {
+      factory_snapshots: {
         Row: {
           created_at: string
-          created_by: string | null
           id: string
-          lot_code: string
-          model: string
-          status: Database["public"]["Enums"]["lot_status"]
-          total_units: number
+          open_issues: number
+          open_shortages: number
+          snapshot_date: string
+          snapshot_hour: number
+          station_counts: Json
+          total_vehicles: number
         }
         Insert: {
           created_at?: string
-          created_by?: string | null
           id?: string
-          lot_code: string
-          model: string
-          status?: Database["public"]["Enums"]["lot_status"]
-          total_units: number
+          open_issues?: number
+          open_shortages?: number
+          snapshot_date?: string
+          snapshot_hour?: number
+          station_counts?: Json
+          total_vehicles?: number
         }
         Update: {
           created_at?: string
-          created_by?: string | null
           id?: string
-          lot_code?: string
-          model?: string
-          status?: Database["public"]["Enums"]["lot_status"]
-          total_units?: number
-        }
-        Relationships: []
-      }
-      profiles: {
-        Row: {
-          created_at: string
-          display_name: string
-          employee_code: string | null
-          id: string
-        }
-        Insert: {
-          created_at?: string
-          display_name: string
-          employee_code?: string | null
-          id: string
-        }
-        Update: {
-          created_at?: string
-          display_name?: string
-          employee_code?: string | null
-          id?: string
+          open_issues?: number
+          open_shortages?: number
+          snapshot_date?: string
+          snapshot_hour?: number
+          station_counts?: Json
+          total_vehicles?: number
         }
         Relationships: []
       }
@@ -160,21 +101,155 @@ export type Database = {
             referencedRelation: "vehicles"
             referencedColumns: ["id"]
           },
+        ]
+      }
+      job_orders: {
+        Row: {
+          color_plan: Json | null
+          created_at: string
+          id: string
+          job_code: string
+          lot_id: string
+          status: Database["public"]["Enums"]["lot_status"]
+          units: number
+          vin_sequence: string[] | null
+        }
+        Insert: {
+          color_plan?: Json | null
+          created_at?: string
+          id?: string
+          job_code: string
+          lot_id: string
+          status?: Database["public"]["Enums"]["lot_status"]
+          units: number
+          vin_sequence?: string[] | null
+        }
+        Update: {
+          color_plan?: Json | null
+          created_at?: string
+          id?: string
+          job_code?: string
+          lot_id?: string
+          status?: Database["public"]["Enums"]["lot_status"]
+          units?: number
+          vin_sequence?: string[] | null
+        }
+        Relationships: [
           {
-            foreignKeyName: "issues_reported_by_fkey"
-            columns: ["reported_by"]
+            foreignKeyName: "job_orders_lot_id_fkey"
+            columns: ["lot_id"]
             isOneToOne: false
-            referencedRelation: "auth.users"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "issues_assigned_to_fkey"
-            columns: ["assigned_to"]
-            isOneToOne: false
-            referencedRelation: "auth.users"
+            referencedRelation: "lots"
             referencedColumns: ["id"]
           },
         ]
+      }
+      lots: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          lot_code: string
+          model: string
+          status: Database["public"]["Enums"]["lot_status"]
+          total_units: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          lot_code: string
+          model: string
+          status?: Database["public"]["Enums"]["lot_status"]
+          total_units: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          lot_code?: string
+          model?: string
+          status?: Database["public"]["Enums"]["lot_status"]
+          total_units?: number
+        }
+        Relationships: []
+      }
+      model_trims: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          model_id: string
+          name: string
+          sort_order: number
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          model_id: string
+          name: string
+          sort_order?: number
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          model_id?: string
+          name?: string
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "model_trims_model_id_fkey"
+            columns: ["model_id"]
+            isOneToOne: false
+            referencedRelation: "models"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      models: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          name: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          name: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          display_name: string
+          employee_code: string | null
+          id: string
+        }
+        Insert: {
+          created_at?: string
+          display_name: string
+          employee_code?: string | null
+          id: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          employee_code?: string | null
+          id?: string
+        }
+        Relationships: []
       }
       shortages: {
         Row: {
@@ -219,6 +294,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      standard_colors: {
+        Row: {
+          active: boolean
+          code: string
+          created_at: string
+          id: string
+          name: string
+          sort_order: number
+        }
+        Insert: {
+          active?: boolean
+          code: string
+          created_at?: string
+          id?: string
+          name: string
+          sort_order?: number
+        }
+        Update: {
+          active?: boolean
+          code?: string
+          created_at?: string
+          id?: string
+          name?: string
+          sort_order?: number
+        }
+        Relationships: []
       }
       station_access_requests: {
         Row: {

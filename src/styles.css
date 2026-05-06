@@ -136,3 +136,31 @@
   }
   h1, h2, h3, h4 { letter-spacing: -0.01em; }
 }
+
+/* Print styles */
+@media print {
+  @page { size: landscape; margin: 0; }
+
+  body * { visibility: hidden; }
+
+  .print-area,
+  .print-area * { visibility: visible; }
+
+  .print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  .print-page {
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .print-page:last-child {
+    page-break-after: auto;
+  }
+
+  header, nav, button, .no-print { display: none !important; }
+}

@@ -34,3 +34,10 @@ export const COLOR_CODES: Record<string, string> = {
   "55U": "Red",
   "66U": "Grey",
 };
+
+export async function loadColorCodes(): Promise<Record<string, string>> {
+  const { supabase } = await import("@/integrations/supabase/client");
+  const { data } = await supabase.from("standard_colors").select("code, name").eq("active", true).order("sort_order");
+  if (data && data.length > 0) return Object.fromEntries(data.map(c => [c.code, c.name]));
+  return COLOR_CODES;
+}
