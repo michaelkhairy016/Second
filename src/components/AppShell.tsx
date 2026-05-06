@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
 import { useNotifications } from "@/hooks/use-notifications";
-import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Search, Menu, AlertCircle, Settings } from "lucide-react";
+import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Search, Menu, AlertCircle, Settings, GitBranch } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import type { ReactNode } from "react";
@@ -25,7 +25,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navLinks = (
     <>
       {link("/", "Stations", LayoutGrid)}
-      {link("/flow", "Production Flow", Workflow)}
+      {link("/flow", "Production Flow", GitBranch)}
       {link("/lookup", "Lookup", Search)}
       {link("/requests", "My Requests", ClipboardList)}
       {link("/issues", "Issues", AlertCircle)}
@@ -83,7 +83,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         <nav className="md:hidden border-t flex overflow-x-auto px-2 gap-1 py-1.5">
           {link("/", "Stations", LayoutGrid)}
-          {link("/flow", "Flow", Workflow)}
+          {link("/flow", "Flow", GitBranch)}
           {link("/lookup", "Lookup", Search)}
           {link("/requests", "Requests", ClipboardList)}
           {link("/issues", "Issues", AlertCircle)}
