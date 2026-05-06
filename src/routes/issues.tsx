@@ -25,7 +25,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { EmptyState } from "@/components/EmptyState";
 
 export const Route = createFileRoute("/issues")({
-  head: () => ({ meta: [{ title: "Issues — Nexus-Flow" }] }),
+  head: () => ({ meta: [{ title: "Issues — AFA Shopfloor" }] }),
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
 });
 

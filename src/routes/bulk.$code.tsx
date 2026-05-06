@@ -15,7 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { StationCode } from "@/lib/db-types";
 
 export const Route = createFileRoute("/bulk/$code")({
-  head: ({ params }) => ({ meta: [{ title: `Bulk ${stationByCode(params.code)?.label} — Nexus-Flow` }] }),
+  head: ({ params }) => ({ meta: [{ title: `Bulk ${stationByCode(params.code)?.label} — AFA Shopfloor` }] }),
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
 });
 

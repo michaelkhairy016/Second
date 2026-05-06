@@ -1,10 +1,10 @@
 {
-  "name": "Nexus-Flow",
-  "short_name": "Nexus-Flow",
-  "description": "Automotive assembly, simplified.",
+  "name": "AFA Shopfloor",
+  "short_name": "AFA",
+  "description": "Aboul Fotouh Automotive Shopfloor System",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#2563eb",
+  "background_color": "#0A0A0A",
+  "theme_color": "#0A0A0A",
   "icons": []
 }

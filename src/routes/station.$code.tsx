@@ -20,7 +20,7 @@ import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardL
 import type { StationEventWithVehicle, StationCode } from "@/lib/db-types";
 
 export const Route = createFileRoute("/station/$code")({
-  head: ({ params }) => ({ meta: [{ title: `${stationByCode(params.code)?.label ?? "Station"} — Nexus-Flow` }] }),
+  head: ({ params }) => ({ meta: [{ title: `${stationByCode(params.code)?.label ?? "Station"} — AFA Shopfloor` }] }),
   component: () => <RequireAuth><AppShell><StationPage /></AppShell></RequireAuth>,
 });
 

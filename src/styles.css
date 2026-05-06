@@ -5,8 +5,8 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Nexus-Flow design system — clean, light, industrial-operational.
- * Inspired by Linear / Notion + factory HMI clarity.
+ * Aboul Fotouh Automotive design system
+ * Dark monochromatic premium theme matching aboulfotouh-egypt.com
  */
 
 @theme inline {
@@ -46,84 +46,57 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
-  --shadow-soft: 0 1px 2px 0 oklch(0.2 0.02 250 / 0.04), 0 1px 3px 0 oklch(0.2 0.02 250 / 0.06);
-  --shadow-pop: 0 8px 24px -8px oklch(0.2 0.02 250 / 0.12);
+  --shadow-soft: 0 1px 2px 0 oklch(0 0 0 / 0.3), 0 1px 3px 0 oklch(0 0 0 / 0.2);
+  --shadow-pop: 0 8px 24px -8px oklch(0 0 0 / 0.5);
 }
 
 :root {
   --radius: 0.625rem;
 
-  --background: oklch(0.985 0.003 250);
-  --foreground: oklch(0.18 0.02 250);
+  /* Core palette — dark monochrome */
+  --background: #0A0A0A;
+  --foreground: #F5F5F5;
 
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.18 0.02 250);
+  --card: #141414;
+  --card-foreground: #F5F5F5;
 
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0.02 250);
+  --popover: #1A1A1A;
+  --popover-foreground: #F5F5F5;
 
-  /* Industrial blue */
-  --primary: oklch(0.52 0.16 252);
-  --primary-foreground: oklch(0.99 0.005 250);
+  /* Primary — white for CTAs (matching website buttons) */
+  --primary: #FFFFFF;
+  --primary-foreground: #0A0A0A;
 
-  --secondary: oklch(0.96 0.008 250);
-  --secondary-foreground: oklch(0.22 0.02 250);
+  --secondary: #1A1A1A;
+  --secondary-foreground: #F5F5F5;
 
-  --muted: oklch(0.96 0.008 250);
-  --muted-foreground: oklch(0.5 0.015 250);
+  --muted: #1A1A1A;
+  --muted-foreground: #8A8A8A;
 
-  --accent: oklch(0.94 0.02 252);
-  --accent-foreground: oklch(0.22 0.04 252);
+  --accent: #222222;
+  --accent-foreground: #F5F5F5;
 
-  --destructive: oklch(0.58 0.22 27);
-  --destructive-foreground: oklch(0.99 0.005 250);
+  --destructive: #DC2626;
+  --destructive-foreground: #F5F5F5;
 
-  --success: oklch(0.62 0.15 152);
-  --success-foreground: oklch(0.99 0.005 250);
+  --success: #22C55E;
+  --success-foreground: #F5F5F5;
 
-  --warning: oklch(0.78 0.16 75);
-  --warning-foreground: oklch(0.22 0.05 60);
+  --warning: #EAB308;
+  --warning-foreground: #0A0A0A;
 
-  --info: oklch(0.62 0.13 230);
-  --info-foreground: oklch(0.99 0.005 250);
+  --info: #3B82F6;
+  --info-foreground: #F5F5F5;
 
-  --border: oklch(0.91 0.008 250);
-  --input: oklch(0.91 0.008 250);
-  --ring: oklch(0.52 0.16 252);
+  --border: rgba(255, 255, 255, 0.10);
+  --input: rgba(255, 255, 255, 0.12);
+  --ring: rgba(255, 255, 255, 0.3);
 
-  --chart-1: oklch(0.52 0.16 252);
-  --chart-2: oklch(0.62 0.15 152);
-  --chart-3: oklch(0.78 0.16 75);
-  --chart-4: oklch(0.58 0.22 27);
-  --chart-5: oklch(0.55 0.17 300);
-}
-
-.dark {
-  --background: oklch(0.16 0.02 250);
-  --foreground: oklch(0.98 0.005 250);
-  --card: oklch(0.21 0.02 250);
-  --card-foreground: oklch(0.98 0.005 250);
-  --popover: oklch(0.21 0.02 250);
-  --popover-foreground: oklch(0.98 0.005 250);
-  --primary: oklch(0.7 0.14 252);
-  --primary-foreground: oklch(0.16 0.02 250);
-  --secondary: oklch(0.27 0.02 250);
-  --secondary-foreground: oklch(0.98 0.005 250);
-  --muted: oklch(0.27 0.02 250);
-  --muted-foreground: oklch(0.7 0.02 250);
-  --accent: oklch(0.3 0.04 252);
-  --accent-foreground: oklch(0.98 0.005 250);
-  --destructive: oklch(0.65 0.2 27);
-  --destructive-foreground: oklch(0.98 0.005 250);
-  --success: oklch(0.7 0.15 152);
-  --success-foreground: oklch(0.16 0.02 250);
-  --warning: oklch(0.8 0.16 75);
-  --warning-foreground: oklch(0.16 0.02 250);
-  --info: oklch(0.7 0.13 230);
-  --info-foreground: oklch(0.16 0.02 250);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.7 0.14 252);
+  --chart-1: #FFFFFF;
+  --chart-2: #22C55E;
+  --chart-3: #EAB308;
+  --chart-4: #DC2626;
+  --chart-5: #8B5CF6;
 }
 
 @layer base {

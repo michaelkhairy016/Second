@@ -21,7 +21,7 @@ interface AdminUser {
 }
 
 export const Route = createFileRoute("/admin")({
-  head: () => ({ meta: [{ title: "Admin — Nexus-Flow" }] }),
+  head: () => ({ meta: [{ title: "Admin — AFA Shopfloor" }] }),
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
 });
 

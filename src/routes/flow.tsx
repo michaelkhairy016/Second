@@ -8,7 +8,7 @@ import { StationDetailSheet } from "@/components/StationDetailSheet";
 import type { Vehicle, Issue, StationCode } from "@/lib/db-types";
 
 export const Route = createFileRoute("/flow")({
-  head: () => ({ meta: [{ title: "Production Flow — Nexus-Flow" }] }),
+  head: () => ({ meta: [{ title: "Production Flow — AFA Shopfloor" }] }),
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
 });
 

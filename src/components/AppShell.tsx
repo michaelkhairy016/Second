@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
 import { useNotifications } from "@/hooks/use-notifications";
-import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Workflow, Search, Menu, AlertCircle, Settings } from "lucide-react";
+import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Search, Menu, AlertCircle, Settings } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import type { ReactNode } from "react";
@@ -37,7 +37,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      <header className="border-b bg-card sticky top-0 z-30">
+      <header className="border-b border-white/[0.08] bg-black/60 backdrop-blur-md sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <Sheet>
@@ -63,9 +63,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </div>
               </SheetContent>
             </Sheet>
-            <Link to="/" className="flex items-center gap-2 font-semibold">
-              <div className="h-7 w-7 rounded-md bg-primary text-primary-foreground grid place-items-center"><Workflow className="h-4 w-4" /></div>
-              <span>Nexus-Flow</span>
+            <Link to="/" className="flex items-center gap-2">
+              <img src="/logo.png" alt="AFA" className="h-6 w-auto brightness-0 invert opacity-70" />
+              <span className="font-semibold text-sm tracking-tight">AFA Shopfloor</span>
             </Link>
           </div>
           <div className="hidden md:flex items-center gap-1">

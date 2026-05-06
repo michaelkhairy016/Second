@@ -12,7 +12,7 @@ import { ClipboardList } from "lucide-react";
 import type { StationAccessRequest } from "@/lib/db-types";
 
 export const Route = createFileRoute("/requests")({
-  head: () => ({ meta: [{ title: "My Requests — Nexus-Flow" }] }),
+  head: () => ({ meta: [{ title: "My Requests — AFA Shopfloor" }] }),
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
 });
 

@@ -13,7 +13,7 @@ import { useEffect, useState } from "react";
 
 export const Route = createFileRoute("/")({
   head: () => ({ meta: [
-    { title: "Stations — Nexus-Flow" },
+    { title: "Stations — AFA Shopfloor" },
     { name: "description", content: "Tap your station to start recording. Locked stations need superuser approval." },
   ]}),
   component: () => <RequireAuth><AppShell><Home /></AppShell></RequireAuth>,

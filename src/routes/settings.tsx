@@ -19,7 +19,7 @@ import { toast } from "sonner";
 import type { StandardColor, Model, ModelTrim, ModelWithTrims } from "@/lib/db-types";
 
 export const Route = createFileRoute("/settings")({
-  head: () => ({ meta: [{ title: "Settings — Nexus-Flow" }] }),
+  head: () => ({ meta: [{ title: "Settings — AFA Shopfloor" }] }),
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
 });
 

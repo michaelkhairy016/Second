@@ -18,7 +18,7 @@ import { JobOrderPrintView } from "@/components/JobOrderPrintView";
 import type { Lot, JobOrder } from "@/lib/db-types";
 
 export const Route = createFileRoute("/warehouse")({
-  head: () => ({ meta: [{ title: "Warehouse — Nexus-Flow" }] }),
+  head: () => ({ meta: [{ title: "Warehouse — AFA Shopfloor" }] }),
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
 });
 

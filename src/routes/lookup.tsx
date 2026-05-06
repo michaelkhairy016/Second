@@ -15,7 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { stationByCode } from "@/lib/stations";
 
 export const Route = createFileRoute("/lookup")({
-  head: () => ({ meta: [{ title: "Lookup — Nexus-Flow" }] }),
+  head: () => ({ meta: [{ title: "Lookup — AFA Shopfloor" }] }),
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
 });
 
