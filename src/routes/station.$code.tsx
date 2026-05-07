@@ -66,12 +66,33 @@ function ScanForm({ station }: { station: StationCode }) {
   const [busy, setBusy] = useState(false);
   const [lotCode, setLotCode] = useState<string | null>(null);
 
+  // Quality check fields
+  const [qualityStatus, setQualityStatus] = useState<"ok" | "issue">("ok");
+  const [issueText, setIssueText] = useState("");
+  const [pbsCondition, setPbsCondition] = useState<"ok" | "damaged" | "dismantled" | "missing_part">("ok");
+  const [pbsNotes, setPbsNotes] = useState("");
+  const [lotShortageWarning, setLotShortageWarning] = useState<string | null>(null);
+
   useEffect(() => {
     if (picked?.lot_id && station === "pbs") {
       supabase.from("lots").select("lot_code").eq("id", picked.lot_id).maybeSingle()
         .then(({ data }) => setLotCode(data?.lot_code ?? null));
     } else { setLotCode(null); }
   }, [picked?.lot_id, station]);
+
+  // PBS lot-shortage check: if any vehicle in the same lot has open shortage, warn
+  useEffect(() => {
+    if (station !== "pbs" || !picked?.lot_id) { setLotShortageWarning(null); return; }
+    let cancel = false;
+    (async () => {
+      const { data: lotVehicles } = await supabase.from("vehicles").select("id").eq("lot_id", picked.lot_id);
+      if (!lotVehicles || cancel) return;
+      const { count } = await supabase.from("shortages").select("id", { count: "exact", head: true })
+        .eq("status", "open").in("vehicle_id", lotVehicles.map(v => v.id));
+      if (!cancel) setLotShortageWarning(count && count > 0 ? `${count} open shortage(s) in this lot — DO NOT proceed to general assembly` : null);
+    })();
+    return () => { cancel = true; };
+  }, [picked?.lot_id, station, picked?.id]);
 
   useEffect(() => {
     if (debouncedSuffix.trim().length < 3) { setMatches([]); return; }
@@ -80,11 +101,13 @@ function ScanForm({ station }: { station: StationCode }) {
     return () => { cancel = true; };
   }, [debouncedSuffix]);
 
-  useEffect(() => { setPicked(null); setColor(""); }, [debouncedSuffix]);
+  useEffect(() => { setPicked(null); setColor(""); setQualityStatus("ok"); setIssueText(""); setPbsCondition("ok"); setPbsNotes(""); setLotShortageWarning(null); }, [debouncedSuffix]);
 
   const submit = async (kind: "in" | "out") => {
     if (!picked) return toast.error("Pick a VIN first");
     if (station === "paint" && kind === "in" && !color) return toast.error("Color required");
+    if (station === "wbs" && kind === "in" && qualityStatus === "issue" && !issueText.trim()) return toast.error("Describe the issue");
+    if (station === "pbs" && kind === "in" && pbsCondition !== "ok" && !pbsNotes.trim()) return toast.error("Add notes about the condition");
     setBusy(true);
     try {
       // Paint warning: count actual color usages in same job_order
@@ -97,29 +120,67 @@ function ScanForm({ station }: { station: StationCode }) {
             .eq("station", "paint").eq("kind", "in").eq("color_used", color)
             .in("vehicle_id", (await supabase.from("vehicles").select("id").eq("job_order_id", picked.job_order_id)).data?.map(v => v.id) ?? []);
           if ((count ?? 0) >= limit) {
-            const ok = window.confirm(`⚠️ Color ${color} already used ${count}/${limit} for this job. Override and continue?`);
+            const ok = window.confirm(`Color ${color} already used ${count}/${limit} for this job. Override and continue?`);
             if (!ok) { setBusy(false); return; }
           }
         }
       }
 
+      // PBS lot-shortage block
+      if (station === "pbs" && kind === "out" && lotShortageWarning) {
+        const ok = window.confirm(`⚠️ ${lotShortageWarning}\n\nOverride and allow vehicle to leave PBS?`);
+        if (!ok) { setBusy(false); return; }
+      }
+
+      // Build meta JSON for quality checks
+      const meta: Record<string, string> = {};
+      if (station === "wbs" && kind === "in") {
+        meta.quality = qualityStatus;
+        if (qualityStatus === "issue") meta.issue = issueText.trim();
+      }
+      if (station === "pbs" && kind === "in") {
+        meta.condition = pbsCondition;
+        if (pbsNotes.trim()) meta.notes = pbsNotes.trim();
+      }
+
       const user = (await supabase.auth.getUser()).data.user;
       const { error } = await supabase.from("station_events").insert({
         vehicle_id: picked.id, station, kind, color_used: color || null, recorded_by: user?.id, source: "manual",
+        meta: Object.keys(meta).length > 0 ? meta : null,
       });
       if (error) throw error;
+
+      // Create issue record for WBS issues
+      if (station === "wbs" && kind === "in" && qualityStatus === "issue") {
+        await supabase.from("issues").insert({
+          vehicle_id: picked.id, station: "wbs", title: issueText.trim(),
+          severity: "medium", status: "open",
+        });
+      }
+
+      // Create issue record for PBS problems
+      if (station === "pbs" && kind === "in" && pbsCondition !== "ok") {
+        const condLabel = pbsCondition === "damaged" ? "Damaged" : pbsCondition === "dismantled" ? "Dismantled" : "Missing part";
+        await supabase.from("issues").insert({
+          vehicle_id: picked.id, station: "pbs", title: `${condLabel}: ${pbsNotes.trim()}`,
+          severity: pbsCondition === "missing_part" ? "high" : "medium", status: "open",
+        });
+      }
 
       const update: { current_station: typeof station; actual_color?: string } = { current_station: station };
       if (station === "paint" && kind === "in" && color) update.actual_color = color;
       await supabase.from("vehicles").update(update).eq("id", picked.id);
 
       if (picked.is_lot_tail) toast.warning(`⚠️ Lot-tail vehicle: ${picked.tail_note ?? "Flagged"}`);
+      if (lotShortageWarning && kind === "out") toast.warning(`⚠️ Vehicle released despite lot shortages`);
       toast.success(`Recorded: ${picked.vin.slice(-5)} ${kind.toUpperCase()}`);
-      setSuffix(""); setPicked(null); setColor("");
+      setSuffix(""); setPicked(null); setColor(""); setQualityStatus("ok"); setIssueText(""); setPbsCondition("ok"); setPbsNotes("");
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
 
   const needsColor = station === "paint";
+  const needsWbsCheck = station === "wbs";
+  const needsPbsCheck = station === "pbs";
 
   return (
     <Card>
@@ -157,6 +218,9 @@ function ScanForm({ station }: { station: StationCode }) {
             {picked.is_lot_tail && (
               <div className="flex items-center gap-1 text-warning text-xs"><AlertTriangle className="h-3 w-3" /> Lot-tail flag: {picked.tail_note}</div>
             )}
+            {lotShortageWarning && (
+              <div className="flex items-center gap-1 text-destructive text-xs mt-1"><AlertTriangle className="h-3 w-3" /> {lotShortageWarning}</div>
+            )}
           </div>
         )}
 
@@ -165,6 +229,41 @@ function ScanForm({ station }: { station: StationCode }) {
             <Label htmlFor="col">Color code</Label>
             <Input id="col" value={color} onChange={e => setColor(e.target.value.toUpperCase())} placeholder="11U" className="font-mono" />
             <div className="text-xs text-muted-foreground">{COLOR_CODES[color] ? `→ ${COLOR_CODES[color]}` : "Codes: 11U white · 22U silver · 33U black · 44U blue · 55U red"}</div>
+          </div>
+        )}
+
+        {/* WBS quality check */}
+        {needsWbsCheck && picked && (
+          <div className="border rounded-md p-3 space-y-2">
+            <Label className="text-sm font-medium">Vehicle condition</Label>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setQualityStatus("ok")} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${qualityStatus === "ok" ? "bg-success/20 border-success text-success" : "bg-muted border-border hover:bg-muted/80"}`}>
+                <CheckCircle2 className="h-4 w-4 inline mr-1" /> OK
+              </button>
+              <button type="button" onClick={() => setQualityStatus("issue")} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${qualityStatus === "issue" ? "bg-warning/20 border-warning text-warning" : "bg-muted border-border hover:bg-muted/80"}`}>
+                <AlertTriangle className="h-4 w-4 inline mr-1" /> Issue
+              </button>
+            </div>
+            {qualityStatus === "issue" && (
+              <Textarea rows={2} value={issueText} onChange={e => setIssueText(e.target.value)} placeholder="Describe the issue (English / العربية)" />
+            )}
+          </div>
+        )}
+
+        {/* PBS condition check */}
+        {needsPbsCheck && picked && (
+          <div className="border rounded-md p-3 space-y-2">
+            <Label className="text-sm font-medium">Body condition</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {(["ok", "damaged", "dismantled", "missing_part"] as const).map(c => (
+                <button key={c} type="button" onClick={() => setPbsCondition(c)} className={`py-2 rounded-md border text-xs font-medium transition-colors ${pbsCondition === c ? (c === "ok" ? "bg-success/20 border-success text-success" : c === "damaged" ? "bg-warning/20 border-warning text-warning" : c === "dismantled" ? "bg-destructive/20 border-destructive text-destructive" : "bg-info/20 border-info text-info") : "bg-muted border-border hover:bg-muted/80"}`}>
+                  {c === "ok" ? "OK ✓" : c === "damaged" ? "Damaged" : c === "dismantled" ? "Dismantled" : "Missing Part"}
+                </button>
+              ))}
+            </div>
+            {pbsCondition !== "ok" && (
+              <Textarea rows={2} value={pbsNotes} onChange={e => setPbsNotes(e.target.value)} placeholder="Describe the condition (English / العربية)" />
+            )}
           </div>
         )}
 
@@ -189,7 +288,7 @@ function RecentEvents({ station }: { station: StationCode }) {
     const load = async () => {
       setLoading(true);
       const { data } = await supabase.from("station_events")
-        .select("id, kind, color_used, recorded_at, vehicle:vehicles(vin)")
+        .select("id, kind, color_used, recorded_at, meta, vehicle:vehicles(vin)")
         .eq("station", station).order("recorded_at", { ascending: false }).limit(8);
       if (!cancelled) { setRows(data ?? []); setLoading(false); }
     };
@@ -218,16 +317,21 @@ function RecentEvents({ station }: { station: StationCode }) {
           <EmptyState icon={ClipboardList} title="No events yet" description="Events will appear here as vehicles are scanned in or out of this station." />
         ) : (
           <ul className="divide-y">
-            {rows.map(r => (
-              <li key={r.id} className="py-2 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Badge variant={r.kind === "in" ? "info" : "success"}>{r.kind.toUpperCase()}</Badge>
-                  <span className="font-mono text-xs">…{r.vehicle?.vin?.slice(-6)}</span>
-                  {r.color_used && <span className="text-xs text-muted-foreground">{r.color_used}</span>}
-                </div>
-                <span className="text-xs text-muted-foreground">{new Date(r.recorded_at).toLocaleTimeString()}</span>
-              </li>
-            ))}
+            {rows.map(r => {
+              const meta = r.meta as Record<string, string> | null;
+              return (
+                <li key={r.id} className="py-2 flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Badge variant={r.kind === "in" ? "info" : "success"}>{r.kind.toUpperCase()}</Badge>
+                    <span className="font-mono text-xs">…{r.vehicle?.vin?.slice(-6)}</span>
+                    {r.color_used && <span className="text-xs text-muted-foreground">{r.color_used}</span>}
+                    {meta?.quality === "issue" && <Badge variant="warning" className="text-[10px] px-1">Issue</Badge>}
+                    {meta?.condition && meta.condition !== "ok" && <Badge variant="warning" className="text-[10px] px-1">{meta.condition}</Badge>}
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0">{new Date(r.recorded_at).toLocaleTimeString()}</span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </CardContent>

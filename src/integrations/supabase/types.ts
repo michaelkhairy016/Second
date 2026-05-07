@@ -304,7 +304,11 @@ export type Database = {
           created_by: string | null
           id: string
           notes: string | null
+          part_type: string | null
           parts: string[]
+          received_by: string | null
+          released_by: string | null
+          responsibility: string | null
           status: Database["public"]["Enums"]["shortage_status"]
           vehicle_id: string
         }
@@ -315,7 +319,11 @@ export type Database = {
           created_by?: string | null
           id?: string
           notes?: string | null
+          part_type?: string | null
           parts: string[]
+          received_by?: string | null
+          released_by?: string | null
+          responsibility?: string | null
           status?: Database["public"]["Enums"]["shortage_status"]
           vehicle_id: string
         }
@@ -326,7 +334,11 @@ export type Database = {
           created_by?: string | null
           id?: string
           notes?: string | null
+          part_type?: string | null
           parts?: string[]
+          received_by?: string | null
+          released_by?: string | null
+          responsibility?: string | null
           status?: Database["public"]["Enums"]["shortage_status"]
           vehicle_id?: string
         }
