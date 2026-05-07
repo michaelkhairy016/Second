@@ -66,7 +66,7 @@ function Page() {
     reload();
   };
 
-  const setRole = async (uid: string, role: "superuser" | "technician" | "staff", on: boolean) => {
+  const setRole = async (uid: string, role: "superuser" | "technician" | "staff" | "status", on: boolean) => {
     if (on) await supabase.from("user_roles").upsert({ user_id: uid, role }, { onConflict: "user_id,role" });
     else await supabase.from("user_roles").delete().eq("user_id", uid).eq("role", role);
     reload();
