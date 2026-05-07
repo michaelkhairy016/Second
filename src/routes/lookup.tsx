@@ -50,7 +50,7 @@ function VehicleLookup() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<VehicleSearchResult[]>([]);
   const [selected, setSelected] = useState<VehicleSearchResult | null>(null);
-  const [events, setEvents] = useState<{ id: string; station: string; kind: string; color_used: string | null; recorded_at: string }[]>([]);
+  const [events, setEvents] = useState<{ id: string; station: string; kind: string; color_used_id: string | null; recorded_at: string }[]>([]);
 
   const handleSearch = async () => {
     const q = query.trim();
@@ -65,7 +65,7 @@ function VehicleLookup() {
     setSelected(v);
     const { data } = await supabase
       .from("station_events")
-      .select("id, station, kind, color_used, recorded_at")
+      .select("id, station, kind, color_used_id, recorded_at")
       .eq("vehicle_id", v.id)
       .order("recorded_at", { ascending: false })
       .limit(20);
@@ -120,11 +120,11 @@ function VehicleLookup() {
               </div>
               <div>
                 <div className="text-xs text-muted-foreground">Planned color</div>
-                <div className="font-mono">{selected.planned_color ?? "—"}</div>
+                <div className="font-mono">{selected.planned_color_id ?? "—"}</div>
               </div>
               <div>
                 <div className="text-xs text-muted-foreground">Actual color</div>
-                <div className="font-mono">{selected.actual_color ?? "—"}</div>
+                <div className="font-mono">{selected.actual_color_id ?? "—"}</div>
               </div>
             </div>
 
@@ -139,7 +139,7 @@ function VehicleLookup() {
                       <div className="flex items-center gap-2">
                         <Badge variant={e.kind === "in" ? "info" : "success"}>{e.kind.toUpperCase()}</Badge>
                         <span className="text-muted-foreground">{stationByCode(e.station)?.label ?? e.station}</span>
-                        {e.color_used && <Badge variant="secondary">{e.color_used}</Badge>}
+                        {e.color_used_id && <Badge variant="secondary">{e.color_used_id}</Badge>}
                       </div>
                       <span className="text-xs text-muted-foreground">{new Date(e.recorded_at).toLocaleString()}</span>
                     </li>

@@ -1,4 +1,5 @@
 import type { JobOrder, Lot } from "@/lib/db-types";
+import { useColors } from "@/hooks/use-colors";
 
 interface Props {
   jobOrder: JobOrder;
@@ -8,6 +9,7 @@ interface Props {
 const VINS_PER_PAGE = 45; // 3 columns x 15 rows
 
 export function JobOrderPrintView({ jobOrder, lot }: Props) {
+  const { getCode } = useColors();
   const vins = jobOrder.vin_sequence ?? [];
   const pages: string[][] = [];
   for (let i = 0; i < vins.length; i += VINS_PER_PAGE) {
@@ -15,7 +17,7 @@ export function JobOrderPrintView({ jobOrder, lot }: Props) {
   }
   if (pages.length === 0) pages.push([]);
 
-  const colorPlan = Object.entries(jobOrder.color_plan ?? {}).map(([code, count]) => `${code}: ${count}`).join("  |  ");
+  const colorPlan = Object.entries(jobOrder.color_plan ?? {}).map(([id, count]) => `${getCode(id)}: ${count}`).join("  |  ");
   const date = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
   return (
@@ -26,7 +28,7 @@ export function JobOrderPrintView({ jobOrder, lot }: Props) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5cm" }}>
             <div>
               <div style={{ fontSize: "18pt", fontWeight: 700 }}>Job Order: {jobOrder.job_code}</div>
-              <div style={{ fontSize: "11pt", marginTop: 4 }}>Lot: {lot?.lot_code ?? "—"} | Model: {lot?.model ?? "—"}</div>
+              <div style={{ fontSize: "11pt", marginTop: 4 }}>Lot: {lot?.lot_code ?? "—"}{lot?.chinese_number ? ` / CN: ${lot.chinese_number}` : ""} | Model: {lot?.model ?? "—"} | Year: {jobOrder.model_year ?? "—"}</div>
               <div style={{ fontSize: "10pt", color: "#666", marginTop: 2 }}>Date: {date} | Units: {jobOrder.units}</div>
             </div>
             <div style={{ fontSize: "10pt", color: "#666", textAlign: "right" }}>

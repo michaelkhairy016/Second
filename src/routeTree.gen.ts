@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WarehouseRouteImport } from './routes/warehouse'
+import { Route as StatusRouteImport } from './routes/status'
 import { Route as ShortagesRouteImport } from './routes/shortages'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as RequestsRouteImport } from './routes/requests'
@@ -17,6 +18,7 @@ import { Route as LookupRouteImport } from './routes/lookup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IssuesRouteImport } from './routes/issues'
 import { Route as FlowRouteImport } from './routes/flow'
+import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
@@ -26,6 +28,11 @@ import { Route as BulkCodeRouteImport } from './routes/bulk.$code'
 const WarehouseRoute = WarehouseRouteImport.update({
   id: '/warehouse',
   path: '/warehouse',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StatusRoute = StatusRouteImport.update({
+  id: '/status',
+  path: '/status',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShortagesRoute = ShortagesRouteImport.update({
@@ -63,6 +70,11 @@ const FlowRoute = FlowRouteImport.update({
   path: '/flow',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CalendarRoute = CalendarRouteImport.update({
+  id: '/calendar',
+  path: '/calendar',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AnalyticsRoute = AnalyticsRouteImport.update({
   id: '/analytics',
   path: '/analytics',
@@ -93,6 +105,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
+  '/calendar': typeof CalendarRoute
   '/flow': typeof FlowRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
@@ -100,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/shortages': typeof ShortagesRoute
+  '/status': typeof StatusRoute
   '/warehouse': typeof WarehouseRoute
   '/bulk/$code': typeof BulkCodeRoute
   '/station/$code': typeof StationCodeRoute
@@ -108,6 +122,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
+  '/calendar': typeof CalendarRoute
   '/flow': typeof FlowRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
@@ -115,6 +130,7 @@ export interface FileRoutesByTo {
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/shortages': typeof ShortagesRoute
+  '/status': typeof StatusRoute
   '/warehouse': typeof WarehouseRoute
   '/bulk/$code': typeof BulkCodeRoute
   '/station/$code': typeof StationCodeRoute
@@ -124,6 +140,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
+  '/calendar': typeof CalendarRoute
   '/flow': typeof FlowRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
@@ -131,6 +148,7 @@ export interface FileRoutesById {
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/shortages': typeof ShortagesRoute
+  '/status': typeof StatusRoute
   '/warehouse': typeof WarehouseRoute
   '/bulk/$code': typeof BulkCodeRoute
   '/station/$code': typeof StationCodeRoute
@@ -141,6 +159,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/analytics'
+    | '/calendar'
     | '/flow'
     | '/issues'
     | '/login'
@@ -148,6 +167,7 @@ export interface FileRouteTypes {
     | '/requests'
     | '/settings'
     | '/shortages'
+    | '/status'
     | '/warehouse'
     | '/bulk/$code'
     | '/station/$code'
@@ -156,6 +176,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/analytics'
+    | '/calendar'
     | '/flow'
     | '/issues'
     | '/login'
@@ -163,6 +184,7 @@ export interface FileRouteTypes {
     | '/requests'
     | '/settings'
     | '/shortages'
+    | '/status'
     | '/warehouse'
     | '/bulk/$code'
     | '/station/$code'
@@ -171,6 +193,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/analytics'
+    | '/calendar'
     | '/flow'
     | '/issues'
     | '/login'
@@ -178,6 +201,7 @@ export interface FileRouteTypes {
     | '/requests'
     | '/settings'
     | '/shortages'
+    | '/status'
     | '/warehouse'
     | '/bulk/$code'
     | '/station/$code'
@@ -187,6 +211,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
   AnalyticsRoute: typeof AnalyticsRoute
+  CalendarRoute: typeof CalendarRoute
   FlowRoute: typeof FlowRoute
   IssuesRoute: typeof IssuesRoute
   LoginRoute: typeof LoginRoute
@@ -194,6 +219,7 @@ export interface RootRouteChildren {
   RequestsRoute: typeof RequestsRoute
   SettingsRoute: typeof SettingsRoute
   ShortagesRoute: typeof ShortagesRoute
+  StatusRoute: typeof StatusRoute
   WarehouseRoute: typeof WarehouseRoute
   BulkCodeRoute: typeof BulkCodeRoute
   StationCodeRoute: typeof StationCodeRoute
@@ -206,6 +232,13 @@ declare module '@tanstack/react-router' {
       path: '/warehouse'
       fullPath: '/warehouse'
       preLoaderRoute: typeof WarehouseRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/status': {
+      id: '/status'
+      path: '/status'
+      fullPath: '/status'
+      preLoaderRoute: typeof StatusRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/shortages': {
@@ -257,6 +290,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FlowRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/calendar': {
+      id: '/calendar'
+      path: '/calendar'
+      fullPath: '/calendar'
+      preLoaderRoute: typeof CalendarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/analytics': {
       id: '/analytics'
       path: '/analytics'
@@ -299,6 +339,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
   AnalyticsRoute: AnalyticsRoute,
+  CalendarRoute: CalendarRoute,
   FlowRoute: FlowRoute,
   IssuesRoute: IssuesRoute,
   LoginRoute: LoginRoute,
@@ -306,6 +347,7 @@ const rootRouteChildren: RootRouteChildren = {
   RequestsRoute: RequestsRoute,
   SettingsRoute: SettingsRoute,
   ShortagesRoute: ShortagesRoute,
+  StatusRoute: StatusRoute,
   WarehouseRoute: WarehouseRoute,
   BulkCodeRoute: BulkCodeRoute,
   StationCodeRoute: StationCodeRoute,

@@ -2,12 +2,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { STATIONS } from "@/lib/stations";
-import { Link2 } from "lucide-react";
+import { Link2, Clock } from "lucide-react";
+import { formatDuration } from "@/lib/utils";
 import type { Vehicle, Issue } from "@/lib/db-types";
 
 interface Props {
   stationKey: string;
-  vehicles: Array<Vehicle & { activeIssues: Issue[]; resolvedIssues: Issue[] }>;
+  vehicles: Array<Vehicle & { activeIssues: Issue[]; resolvedIssues: Issue[]; enteredAt: string | null }>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -50,6 +51,14 @@ export function StationDetailSheet({ stationKey, vehicles, open, onOpenChange }:
                     <span className="font-mono font-semibold text-sm">{v.vin_suffix}</span>
                     <span className="text-xs text-muted-foreground">{v.vin}</span>
                   </div>
+                  {v.enteredAt && (
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      <Clock className="h-3 w-3" />
+                      <span>Entered {new Date(v.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                      <span>·</span>
+                      <span className="font-medium">{formatDuration(v.enteredAt)}</span>
+                    </div>
+                  )}
                   {v.activeIssues.length > 0 && (
                     <div className="flex flex-wrap gap-1">
                       {v.activeIssues.map(issue => (
@@ -62,7 +71,7 @@ export function StationDetailSheet({ stationKey, vehicles, open, onOpenChange }:
                   {v.resolvedIssues.length > 0 && (
                     <span className="text-[10px] text-muted-foreground">{v.resolvedIssues.length} resolved issue{v.resolvedIssues.length !== 1 ? "s" : ""}</span>
                   )}
-                  {v.activeIssues.length === 0 && v.resolvedIssues.length === 0 && (
+                  {v.activeIssues.length === 0 && v.resolvedIssues.length === 0 && !v.enteredAt && (
                     <span className="text-[10px] text-muted-foreground">No issues</span>
                   )}
                 </li>

@@ -59,6 +59,30 @@ export type Database = {
           },
         ]
       }
+      factory_calendar: {
+        Row: {
+          created_at: string
+          date: string
+          id: string
+          is_working_day: boolean
+          notes: string | null
+        }
+        Insert: {
+          created_at?: string
+          date: string
+          id?: string
+          is_working_day?: boolean
+          notes?: string | null
+        }
+        Update: {
+          created_at?: string
+          date?: string
+          id?: string
+          is_working_day?: boolean
+          notes?: string | null
+        }
+        Relationships: []
+      }
       factory_snapshots: {
         Row: {
           created_at: string
@@ -155,6 +179,7 @@ export type Database = {
           id: string
           job_code: string
           lot_id: string
+          model_year: string | null
           status: Database["public"]["Enums"]["lot_status"]
           units: number
           vin_sequence: string[] | null
@@ -165,6 +190,7 @@ export type Database = {
           id?: string
           job_code: string
           lot_id: string
+          model_year?: string | null
           status?: Database["public"]["Enums"]["lot_status"]
           units: number
           vin_sequence?: string[] | null
@@ -175,6 +201,7 @@ export type Database = {
           id?: string
           job_code?: string
           lot_id?: string
+          model_year?: string | null
           status?: Database["public"]["Enums"]["lot_status"]
           units?: number
           vin_sequence?: string[] | null
@@ -191,6 +218,7 @@ export type Database = {
       }
       lots: {
         Row: {
+          chinese_number: string | null
           created_at: string
           created_by: string | null
           id: string
@@ -200,6 +228,7 @@ export type Database = {
           total_units: number
         }
         Insert: {
+          chinese_number?: string | null
           created_at?: string
           created_by?: string | null
           id?: string
@@ -209,6 +238,7 @@ export type Database = {
           total_units: number
         }
         Update: {
+          chinese_number?: string | null
           created_at?: string
           created_by?: string | null
           id?: string
@@ -438,7 +468,7 @@ export type Database = {
       }
       station_events: {
         Row: {
-          color_used: string | null
+          color_used_id: string | null
           id: string
           kind: Database["public"]["Enums"]["event_kind"]
           meta: Json | null
@@ -449,7 +479,7 @@ export type Database = {
           vehicle_id: string
         }
         Insert: {
-          color_used?: string | null
+          color_used_id?: string | null
           id?: string
           kind: Database["public"]["Enums"]["event_kind"]
           meta?: Json | null
@@ -460,7 +490,7 @@ export type Database = {
           vehicle_id: string
         }
         Update: {
-          color_used?: string | null
+          color_used_id?: string | null
           id?: string
           kind?: Database["public"]["Enums"]["event_kind"]
           meta?: Json | null
@@ -471,6 +501,13 @@ export type Database = {
           vehicle_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "station_events_color_used_id_fkey"
+            columns: ["color_used_id"]
+            isOneToOne: false
+            referencedRelation: "standard_colors"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "station_events_vehicle_id_fkey"
             columns: ["vehicle_id"]
@@ -490,7 +527,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
-          role: Database["public"]["Enums"]["app_role"]
+          role?: Database["public"]["Enums"]["app_role"]
           user_id: string
         }
         Update: {
@@ -503,48 +540,55 @@ export type Database = {
       }
       vehicles: {
         Row: {
-          actual_color: string | null
+          actual_color_id: string | null
           created_at: string
           current_station: Database["public"]["Enums"]["station_code"] | null
           id: string
           is_lot_tail: boolean
           job_order_id: string | null
           lot_id: string | null
-          planned_color: string | null
+          planned_color_id: string | null
           tail_note: string | null
           updated_at: string
           vin: string
           vin_suffix: string
         }
         Insert: {
-          actual_color?: string | null
+          actual_color_id?: string | null
           created_at?: string
           current_station?: Database["public"]["Enums"]["station_code"] | null
           id?: string
           is_lot_tail?: boolean
           job_order_id?: string | null
           lot_id?: string | null
-          planned_color?: string | null
+          planned_color_id?: string | null
           tail_note?: string | null
           updated_at?: string
           vin: string
           vin_suffix: string
         }
         Update: {
-          actual_color?: string | null
+          actual_color_id?: string | null
           created_at?: string
           current_station?: Database["public"]["Enums"]["station_code"] | null
           id?: string
           is_lot_tail?: boolean
           job_order_id?: string | null
           lot_id?: string | null
-          planned_color?: string | null
+          planned_color_id?: string | null
           tail_note?: string | null
           updated_at?: string
           vin?: string
           vin_suffix?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "vehicles_actual_color_id_fkey"
+            columns: ["actual_color_id"]
+            isOneToOne: false
+            referencedRelation: "standard_colors"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "vehicles_job_order_id_fkey"
             columns: ["job_order_id"]
@@ -559,6 +603,13 @@ export type Database = {
             referencedRelation: "lots"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "vehicles_planned_color_id_fkey"
+            columns: ["planned_color_id"]
+            isOneToOne: false
+            referencedRelation: "standard_colors"
+            referencedColumns: ["id"]
+          },
         ]
       }
     }
@@ -566,6 +617,22 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_delayed_vehicles: {
+        Args: {
+          threshold_days: number
+        }
+        Returns: {
+          vehicle_id: string
+          vin: string
+          vin_suffix: string
+          current_station: string
+          entered_at: string
+          working_days_at_station: number
+          lot_code: string | null
+          lot_model: string | null
+          job_order_id: string | null
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -608,7 +675,7 @@ export type Database = {
 
 type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
 
-type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof DatabaseWithoutInternals, "public">]
 
 export type Tables<
   DefaultSchemaTableNameOrOptions extends

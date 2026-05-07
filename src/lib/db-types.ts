@@ -48,13 +48,13 @@ export type ShortageWithVehicle = Shortage & {
   vehicle: Pick<Vehicle, "vin" | "current_station"> | null;
 };
 
-export type StationEventWithVehicle = Pick<StationEvent, "id" | "kind" | "color_used" | "recorded_at" | "meta"> & {
+export type StationEventWithVehicle = Pick<StationEvent, "id" | "kind" | "color_used_id" | "recorded_at" | "meta"> & {
   vehicle: { vin: string } | null;
 };
 
 export type VehicleSearchResult = Pick<
   Vehicle,
-  "id" | "vin" | "vin_suffix" | "planned_color" | "actual_color" | "current_station" | "lot_id" | "job_order_id" | "is_lot_tail" | "tail_note"
+  "id" | "vin" | "vin_suffix" | "planned_color_id" | "actual_color_id" | "current_station" | "lot_id" | "job_order_id" | "is_lot_tail" | "tail_note"
 >;
 
 export type AccessRequestWithProfile = StationAccessRequest & {

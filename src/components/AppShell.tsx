@@ -1,16 +1,52 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
 import { useNotifications } from "@/hooks/use-notifications";
-import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Search, Menu, AlertCircle, Settings, GitBranch, Eye } from "lucide-react";
+import { useTheme } from "@/hooks/use-theme";
+import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Search, Menu, AlertCircle, Settings, GitBranch, Eye, Sun, Moon, CalendarDays, ShieldCheck } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
 import type { ReactNode } from "react";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { displayName, roles, signOut, isSuperuser, isStaff, isStatus } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
+  const { theme, toggleTheme } = useTheme();
 
   useNotifications();
+
+  if (roles.length === 0) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden">
+        <div className="absolute inset-0 z-0">
+          <img src="/ezgif.com-video-to-gif.gif" alt="" className="w-full h-full object-cover opacity-50" />
+          <div className="absolute inset-0 bg-black/50" />
+        </div>
+        <div className="relative z-10 w-full max-w-sm px-4">
+          <div className="flex flex-col items-center gap-4 mb-8">
+            <img src="/logo.png" alt="Aboul Fotouh Automotive" className="h-16 w-auto brightness-0 invert" />
+          </div>
+          <div className="bg-white/[0.04] border border-white/10 backdrop-blur-sm rounded-lg p-6 flex flex-col items-center gap-4 text-center">
+            <div className="h-14 w-14 rounded-full bg-amber-500/20 grid place-items-center">
+              <ShieldCheck className="h-7 w-7 text-amber-400" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-white/90">Email confirmed</h2>
+              <p className="text-sm text-white/60 mt-1">
+                Your email has been verified successfully. A <span className="text-white/80 font-medium">super admin</span> must now approve your account and assign your role and station access.
+              </p>
+            </div>
+            <div className="bg-white/[0.04] border border-white/10 rounded-md px-3 py-2 text-xs text-white/40 w-full">
+              You will receive access once an administrator assigns you a role. This typically happens within 24 hours. Please contact your supervisor if you need expedited access.
+            </div>
+            <Button variant="outline" onClick={async () => { await signOut(); nav({ to: "/login" }); }} className="w-full border-white/10 text-white/70 hover:bg-white/[0.06] hover:text-white">
+              Sign out
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const link = (to: string, label: string, Icon: React.ComponentType<{ className?: string }>) => {
     const active = loc.pathname === to || (to !== "/" && loc.pathname.startsWith(to));
@@ -23,15 +59,16 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const navLinks = (
     <>
-      {link("/", "Stations", LayoutGrid)}
+      {!isStatus && link("/", "Stations", LayoutGrid)}
       {link("/flow", "Production Flow", GitBranch)}
       {link("/lookup", "Lookup", Search)}
-      {link("/requests", "My Requests", ClipboardList)}
-      {link("/issues", "Issues", AlertCircle)}
+      {!isStatus && link("/requests", "My Requests", ClipboardList)}
+      {!isStatus && link("/issues", "Issues", AlertCircle)}
       {isStatus && link("/status", "Status", Eye)}
       {isSuperuser && link("/analytics", "Analytics", BarChart3)}
       {(isSuperuser || isStaff) && link("/admin", "Admin", Users)}
       {isSuperuser && link("/settings", "Settings", Settings)}
+      {link("/calendar", "Calendar", CalendarDays)}
     </>
   );
 
@@ -76,21 +113,25 @@ export function AppShell({ children }: { children: ReactNode }) {
               <div className="font-medium">{displayName ?? "—"}</div>
               <div className="text-xs text-muted-foreground capitalize">{roles[0] ?? "no role"}</div>
             </div>
+            <button onClick={toggleTheme} className="p-2 rounded-md hover:bg-muted text-muted-foreground" aria-label="Toggle theme">
+              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
             <button onClick={async () => { await signOut(); nav({ to: "/login" }); }} className="p-2 rounded-md hover:bg-muted text-muted-foreground" aria-label="Sign out">
               <LogOut className="h-4 w-4" />
             </button>
           </div>
         </div>
         <nav className="md:hidden border-t flex overflow-x-auto px-2 gap-1 py-1.5">
-          {link("/", "Stations", LayoutGrid)}
+          {!isStatus && link("/", "Stations", LayoutGrid)}
           {link("/flow", "Flow", GitBranch)}
           {link("/lookup", "Lookup", Search)}
-          {link("/requests", "Requests", ClipboardList)}
-          {link("/issues", "Issues", AlertCircle)}
+          {!isStatus && link("/requests", "Requests", ClipboardList)}
+          {!isStatus && link("/issues", "Issues", AlertCircle)}
           {isStatus && link("/status", "Status", Eye)}
           {isSuperuser && link("/analytics", "Analytics", BarChart3)}
           {(isSuperuser || isStaff) && link("/admin", "Admin", Users)}
           {isSuperuser && link("/settings", "Settings", Settings)}
+          {link("/calendar", "Calendar", CalendarDays)}
         </nav>
       </header>
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-6">{children}</main>

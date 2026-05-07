@@ -41,3 +41,10 @@ export async function loadColorCodes(): Promise<Record<string, string>> {
   if (data && data.length > 0) return Object.fromEntries(data.map(c => [c.code, c.name]));
   return COLOR_CODES;
 }
+
+export async function loadColorMap(): Promise<Map<string, { code: string; name: string }>> {
+  const { supabase } = await import("@/integrations/supabase/client");
+  const { data } = await supabase.from("standard_colors").select("id, code, name").eq("active", true).order("sort_order");
+  if (data && data.length > 0) return new Map(data.map(c => [c.id, { code: c.code, name: c.name }]));
+  return new Map();
+}

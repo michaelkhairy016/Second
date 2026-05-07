@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
+import { Loader2, MailCheck, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
 import { loginSchema, signupSchema } from "@/lib/schemas";
@@ -24,6 +24,7 @@ function LoginPage() {
   const [name, setName] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [signupDone, setSignupDone] = useState(false);
 
   useEffect(() => { if (ready && user) nav({ to: "/" }); }, [ready, user, nav]);
 
@@ -57,7 +58,8 @@ function LoginPage() {
           options: { emailRedirectTo: window.location.origin, data: { display_name: name || email.split("@")[0] } }
         });
         if (error) throw error;
-        toast.success("Account created");
+        setSignupDone(true);
+        return;
       }
       nav({ to: "/" });
     } catch (err: unknown) {
@@ -66,16 +68,52 @@ function LoginPage() {
     } finally { setBusy(false); }
   };
 
+  if (signupDone) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden">
+        <div className="absolute inset-0 z-0">
+          <img src="/ezgif.com-video-to-gif.gif" alt="" className="w-full h-full object-cover opacity-50" />
+          <div className="absolute inset-0 bg-black/50" />
+        </div>
+        <div className="relative z-10 w-full max-w-sm px-4">
+          <div className="flex flex-col items-center gap-4 mb-8">
+            <img src="/logo.png" alt="Aboul Fotouh Automotive" className="h-16 w-auto brightness-0 invert" />
+          </div>
+          <Card className="bg-white/[0.04] border-white/10 backdrop-blur-sm">
+            <CardContent className="pt-6 pb-6 flex flex-col items-center gap-4 text-center">
+              <div className="h-14 w-14 rounded-full bg-green-500/20 grid place-items-center">
+                <MailCheck className="h-7 w-7 text-green-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white/90">Check your email</h2>
+                <p className="text-sm text-white/60 mt-1">
+                  We sent a confirmation link to <span className="text-white/80 font-medium">{email}</span>.
+                  Please check your inbox and click the link to verify your account.
+                </p>
+              </div>
+              <div className="bg-white/[0.04] border border-white/10 rounded-md px-3 py-2 text-xs text-white/40 w-full">
+                After verifying your email, a <span className="text-white/60 font-medium">super admin</span> must approve your access before you can use the system.
+              </div>
+              <Button variant="outline" onClick={() => { setSignupDone(false); setMode("signin"); }} className="w-full border-white/10 text-white/70 hover:bg-white/[0.06] hover:text-white">
+                Back to sign in
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden">
-      {/* GIF background with dark overlay — matching website hero */}
+      {/* GIF background with overlay */}
       <div className="absolute inset-0 z-0">
         <img
           src="/ezgif.com-video-to-gif.gif"
           alt=""
-          className="w-full h-full object-cover opacity-30 grayscale"
+          className="w-full h-full object-cover opacity-50"
         />
-        <div className="absolute inset-0 bg-black/80" />
+        <div className="absolute inset-0 bg-black/50" />
       </div>
 
       {/* Content */}
@@ -125,7 +163,7 @@ function LoginPage() {
           </CardContent>
         </Card>
         <p className="text-xs text-white/30 text-center mt-4">
-          New accounts default to <span className="font-medium text-white/50">Technician</span>. An admin will assign your station.
+          New accounts require <span className="font-medium text-white/50">admin approval</span> before access is granted.
         </p>
       </div>
     </div>

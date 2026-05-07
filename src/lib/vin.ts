@@ -6,7 +6,7 @@ export async function findBySuffix(suffix: string) {
   if (s.length < 3) return [];
   const { data, error } = await supabase
     .from("vehicles")
-    .select("id, vin, vin_suffix, planned_color, actual_color, current_station, lot_id, job_order_id, is_lot_tail, tail_note")
+    .select("id, vin, vin_suffix, planned_color_id, actual_color_id, current_station, lot_id, job_order_id, is_lot_tail, tail_note")
     .ilike("vin_suffix", `%${s}`)
     .limit(10);
   if (error) throw error;

@@ -53,7 +53,7 @@ function Page() {
     const rangeStart = getRangeStart(timeRange);
 
     const [vsRes, shortagesRes, issuesRes, eventsRes, resolvedRes, lotsRes, issuesByVehicleRes, shortagesByVehicleRes] = await Promise.all([
-      supabase.from("vehicles").select("current_station, planned_color, actual_color, job_order_id"),
+      supabase.from("vehicles").select("current_station, planned_color_id, actual_color_id, job_order_id"),
       supabase.from("shortages").select("id", { count: "exact", head: true }).eq("status", "open"),
       supabase.from("issues").select("id", { count: "exact", head: true }).in("status", ["open", "in_progress"]),
       supabase.from("station_events").select("station, kind, recorded_at").gte("recorded_at", rangeStart.toISOString()),
@@ -74,8 +74,8 @@ function Page() {
 
     const planned: Record<string, number> = {}; const actual: Record<string, number> = {};
     vs.forEach(v => {
-      if (v.planned_color) planned[v.planned_color] = (planned[v.planned_color] ?? 0) + 1;
-      if (v.actual_color) actual[v.actual_color] = (actual[v.actual_color] ?? 0) + 1;
+      if (v.planned_color_id) planned[v.planned_color_id] = (planned[v.planned_color_id] ?? 0) + 1;
+      if (v.actual_color_id) actual[v.actual_color_id] = (actual[v.actual_color_id] ?? 0) + 1;
     });
     const colors = Array.from(new Set([...Object.keys(planned), ...Object.keys(actual)]));
     setColorVariance(colors.map(c => ({ color: c, planned: planned[c] ?? 0, actual: actual[c] ?? 0, variance: (actual[c] ?? 0) - (planned[c] ?? 0) })));

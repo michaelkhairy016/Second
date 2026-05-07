@@ -57,7 +57,7 @@ function Page() {
       .order("created_at", { ascending: false });
 
     if (filterStatus !== "all") query = query.eq("status", filterStatus);
-    if (filterStation !== "all") query = query.eq("station", filterStation);
+    if (filterStation !== "all") query = query.eq("station", filterStation as any);
 
     const { data } = await query;
     setIssues((data as unknown as IssueWithVehicle[]) ?? []);
@@ -96,7 +96,7 @@ function Page() {
       update.resolved_at = new Date().toISOString();
       update.resolved_by = user?.id;
     }
-    const { error } = await supabase.from("issues").update(update).eq("id", id);
+    const { error } = await supabase.from("issues").update(update as any).eq("id", id);
     if (error) toast.error(error.message); else toast.success(`Issue marked as ${status.replace("_", " ")}`);
   };
 

@@ -6,7 +6,7 @@
 
 /*
  * Aboul Fotouh Automotive design system
- * Dark monochromatic premium theme matching aboulfotouh-egypt.com
+ * Dark default with light mode toggle
  */
 
 @theme inline {
@@ -50,10 +50,10 @@
   --shadow-pop: 0 8px 24px -8px oklch(0 0 0 / 0.5);
 }
 
+/* ===== Dark theme (default) ===== */
 :root {
   --radius: 0.625rem;
 
-  /* Core palette — dark monochrome */
   --background: #0A0A0A;
   --foreground: #F5F5F5;
 
@@ -63,7 +63,6 @@
   --popover: #1A1A1A;
   --popover-foreground: #F5F5F5;
 
-  /* Primary — white for CTAs (matching website buttons) */
   --primary: #FFFFFF;
   --primary-foreground: #0A0A0A;
 
@@ -97,6 +96,52 @@
   --chart-3: #EAB308;
   --chart-4: #DC2626;
   --chart-5: #8B5CF6;
+}
+
+/* ===== Light theme ===== */
+[data-theme="light"] {
+  --background: #F8F9FA;
+  --foreground: #1A1A1A;
+
+  --card: #FFFFFF;
+  --card-foreground: #1A1A1A;
+
+  --popover: #FFFFFF;
+  --popover-foreground: #1A1A1A;
+
+  --primary: #0A0A0A;
+  --primary-foreground: #F5F5F5;
+
+  --secondary: #F1F3F5;
+  --secondary-foreground: #1A1A1A;
+
+  --muted: #F1F3F5;
+  --muted-foreground: #6B7280;
+
+  --accent: #E5E7EB;
+  --accent-foreground: #1A1A1A;
+
+  --destructive: #DC2626;
+  --destructive-foreground: #F5F5F5;
+
+  --success: #16A34A;
+  --success-foreground: #F5F5F5;
+
+  --warning: #CA8A04;
+  --warning-foreground: #F5F5F5;
+
+  --info: #2563EB;
+  --info-foreground: #F5F5F5;
+
+  --border: rgba(0, 0, 0, 0.10);
+  --input: rgba(0, 0, 0, 0.12);
+  --ring: rgba(0, 0, 0, 0.2);
+
+  --chart-1: #1A1A1A;
+  --chart-2: #16A34A;
+  --chart-3: #CA8A04;
+  --chart-4: #DC2626;
+  --chart-5: #7C3AED;
 }
 
 @layer base {
