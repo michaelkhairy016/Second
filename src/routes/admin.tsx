@@ -102,7 +102,7 @@ function Page() {
               <div key={u.id} className="border rounded-md p-3 space-y-2">
                 <div className="font-medium text-sm">{u.display_name}</div>
                 <div className="flex flex-wrap gap-1.5">
-                  {(["superuser","technician","staff"] as const).map(r => {
+                  {(["superuser","technician","staff","status"] as const).map(r => {
                     const on = u.roles.includes(r);
                     return <button key={r} onClick={() => setRole(u.id, r, !on)}><Badge variant={on ? "info" : "muted"}>{r}</Badge></button>;
                   })}

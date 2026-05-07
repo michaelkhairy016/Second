@@ -20,9 +20,11 @@ export const Route = createFileRoute("/")({
 });
 
 function Home() {
-  const { displayName, hasStation, isSuperuser, isStaff } = useAuth();
+  const { displayName, hasStation, isSuperuser, isStaff, isStatus } = useAuth();
   const nav = useNavigate();
   const [requesting, setRequesting] = useState<string | null>(null);
+
+  useEffect(() => { if (isStatus) nav({ to: "/status" }); }, [isStatus, nav]);
 
   const [stats, setStats] = useState<{ total: number; inProduction: number; openShortages: number; openIssues: number } | null>(null);
   const [stationCounts, setStationCounts] = useState<Record<string, number>>({});

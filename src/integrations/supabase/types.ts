@@ -571,7 +571,7 @@ export type Database = {
     }
     Enums: {
       access_request_status: "pending" | "approved" | "denied"
-      app_role: "superuser" | "technician" | "staff"
+      app_role: "superuser" | "technician" | "staff" | "status"
       engine_status: "available" | "assigned" | "installed"
       event_kind: "in" | "out"
       issue_severity: "low" | "medium" | "high" | "critical"
@@ -715,7 +715,7 @@ export const Constants = {
   public: {
     Enums: {
       access_request_status: ["pending", "approved", "denied"],
-      app_role: ["superuser", "technician", "staff"],
+      app_role: ["superuser", "technician", "staff", "status"],
       engine_status: ["available", "assigned", "installed"],
       event_kind: ["in", "out"],
       issue_severity: ["low", "medium", "high", "critical"],

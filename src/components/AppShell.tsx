@@ -1,13 +1,12 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
 import { useNotifications } from "@/hooks/use-notifications";
-import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Search, Menu, AlertCircle, Settings, GitBranch } from "lucide-react";
+import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Search, Menu, AlertCircle, Settings, GitBranch, Eye } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
-import { Button } from "@/components/ui/button";
 import type { ReactNode } from "react";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { displayName, roles, signOut, isSuperuser, isStaff } = useAuth();
+  const { displayName, roles, signOut, isSuperuser, isStaff, isStatus } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
 
@@ -29,6 +28,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {link("/lookup", "Lookup", Search)}
       {link("/requests", "My Requests", ClipboardList)}
       {link("/issues", "Issues", AlertCircle)}
+      {isStatus && link("/status", "Status", Eye)}
       {isSuperuser && link("/analytics", "Analytics", BarChart3)}
       {(isSuperuser || isStaff) && link("/admin", "Admin", Users)}
       {isSuperuser && link("/settings", "Settings", Settings)}
@@ -87,6 +87,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {link("/lookup", "Lookup", Search)}
           {link("/requests", "Requests", ClipboardList)}
           {link("/issues", "Issues", AlertCircle)}
+          {isStatus && link("/status", "Status", Eye)}
           {isSuperuser && link("/analytics", "Analytics", BarChart3)}
           {(isSuperuser || isStaff) && link("/admin", "Admin", Users)}
           {isSuperuser && link("/settings", "Settings", Settings)}

@@ -3,7 +3,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import type { StationCode } from "@/lib/stations";
 
-export type AppRole = "superuser" | "technician" | "staff";
+export type AppRole = "superuser" | "technician" | "staff" | "status";
 
 interface AuthState {
   ready: boolean;
@@ -15,6 +15,7 @@ interface AuthState {
   isSuperuser: boolean;
   isStaff: boolean;
   isTechnician: boolean;
+  isStatus: boolean;
   hasStation: (s: StationCode) => boolean;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -60,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isSuperuser: roles.includes("superuser"),
     isStaff: roles.includes("staff"),
     isTechnician: roles.includes("technician"),
+    isStatus: roles.includes("status"),
     hasStation: (s) => roles.includes("superuser") || stations.includes(s),
     refresh: async () => { if (user) await loadProfile(user.id); },
     signOut: async () => { await supabase.auth.signOut(); },
