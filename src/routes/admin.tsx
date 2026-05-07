@@ -31,16 +31,17 @@ function Page() {
   const isAdmin = isSuperuser || isStaff;
   useEffect(() => { if (!isAdmin) nav({ to: "/" }); }, [isAdmin, nav]);
 
-  const [reqs, setReqs] = useState<AccessRequestWithProfile[]>([]);
+  const [reqs, setReqs] = useState<(AccessRequestWithProfile & { profile: { display_name: string } | null })[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const reload = async () => {
     const [{ data: r }, { data: p }, { data: ro }, { data: as }] = await Promise.all([
-      supabase.from("station_access_requests").select("*, profile:profiles!station_access_requests_user_id_fkey(display_name)").eq("status","pending").order("created_at"),
+      supabase.from("station_access_requests").select("*").eq("status","pending").order("created_at"),
       supabase.from("profiles").select("id, display_name"),
       supabase.from("user_roles").select("*"),
       supabase.from("station_assignments").select("*"),
     ]);
-    setReqs(r ?? []);
+    const profileMap = new Map((p ?? []).map(x => [x.id, x.display_name]));
+    setReqs((r ?? []).map(req => ({ ...req, profile: { display_name: profileMap.get(req.user_id) ?? "User" } })));
     setUsers((p ?? []).map(u => ({
       ...u,
       roles: (ro ?? []).filter(x => x.user_id === u.id).map(x => x.role),
