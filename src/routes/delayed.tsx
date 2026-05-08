@@ -33,11 +33,11 @@ interface DelayedVehicle {
 }
 
 function DelayedPage() {
-  const { isSuperuser, isStaff, isStatus } = useAuth();
+  const { isSuperuser, isStaff } = useAuth();
   const nav = useNavigate();
   useEffect(() => {
-    if (!isSuperuser && !isStaff && !isStatus) nav({ to: "/" });
-  }, [isSuperuser, isStaff, isStatus, nav]);
+    if (!isSuperuser && !isStaff) nav({ to: "/" });
+  }, [isSuperuser, isStaff, nav]);
 
   const [globalThreshold, setGlobalThreshold] = useState(2);
   const [localThreshold, setLocalThreshold] = useState(2);

@@ -20,29 +20,53 @@ interface Props {
   onStationClick: (key: string) => void;
 }
 
+// Stations that belong to the main production flow line
+const MAIN_FLOW_CODES = ["warehouse", "body_shop", "wbs", "paint", "pbs", "tcf", "waiting_repair", "repair", "cs", "pdi"];
+// Stations shown beside the flow (overflow/buffer)
+const OVERFLOW_CODES = ["shortage", "tcf_offline"];
+
 export function ProductionFlowDiagram({ counts, lineFeedingCount, onStationClick }: Props) {
-  const steps: FlowStep[] = [];
+  const mainSteps: FlowStep[] = [];
+  const overflowSteps: FlowStep[] = [];
 
   // Warehouse
   const wh = STATIONS.find(s => s.code === "warehouse")!;
-  steps.push({ key: "warehouse", label: wh.label, short: wh.short, icon: wh.icon, count: counts["warehouse"] ?? 0, onClick: () => onStationClick("warehouse") });
+  mainSteps.push({ key: "warehouse", label: wh.label, short: wh.short, icon: wh.icon, count: counts["warehouse"] ?? 0, onClick: () => onStationClick("warehouse") });
 
   // Line Feeding (virtual step)
-  steps.push({ key: "line_feeding", label: "Line Feeding", short: "LF", icon: Link2, count: lineFeedingCount, isVirtual: true, onClick: () => onStationClick("line_feeding") });
+  mainSteps.push({ key: "line_feeding", label: "Line Feeding", short: "LF", icon: Link2, count: lineFeedingCount, isVirtual: true, onClick: () => onStationClick("line_feeding") });
 
-  // Remaining stations (skip warehouse)
-  STATIONS.filter(s => s.code !== "warehouse").forEach(s => {
-    steps.push({ key: s.code, label: s.label, short: s.short, icon: s.icon, count: counts[s.code] ?? 0, onClick: () => onStationClick(s.code) });
+  // Main flow stations (skip warehouse, already added)
+  STATIONS.filter(s => MAIN_FLOW_CODES.includes(s.code) && s.code !== "warehouse").forEach(s => {
+    mainSteps.push({ key: s.code, label: s.label, short: s.short, icon: s.icon, count: counts[s.code] ?? 0, onClick: () => onStationClick(s.code) });
+  });
+
+  // Overflow stations (beside the flow)
+  STATIONS.filter(s => OVERFLOW_CODES.includes(s.code)).forEach(s => {
+    overflowSteps.push({ key: s.code, label: s.label, short: s.short, icon: s.icon, count: counts[s.code] ?? 0, onClick: () => onStationClick(s.code) });
   });
 
   return (
-    <div className="flex flex-wrap items-center justify-center gap-2 md:gap-3">
-      {steps.map((step, i) => (
-        <div key={step.key} className="flex items-center gap-2 md:gap-3">
-          <StationFlowCard step={step} />
-          {i < steps.length - 1 && <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 hidden md:block" />}
+    <div className="space-y-3">
+      {/* Main production flow line */}
+      <div className="flex flex-wrap items-center justify-center gap-2 md:gap-3">
+        {mainSteps.map((step, i) => (
+          <div key={step.key} className="flex items-center gap-2 md:gap-3">
+            <StationFlowCard step={step} />
+            {i < mainSteps.length - 1 && <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 hidden md:block" />}
+          </div>
+        ))}
+      </div>
+
+      {/* Overflow / beside-flow stations */}
+      {overflowSteps.length > 0 && (
+        <div className="flex flex-wrap items-center justify-center gap-2 md:gap-3 pt-2">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mr-1">Beside flow</span>
+          {overflowSteps.map(step => (
+            <StationFlowCard key={step.key} step={step} />
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }

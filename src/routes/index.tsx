@@ -3,7 +3,7 @@ import { RequireAuth } from "@/components/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/lib/auth-context";
 import { STATIONS } from "@/lib/stations";
-import { Lock, ChevronRight } from "lucide-react";
+import { Lock, ChevronRight, ShieldOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/StatCard";
@@ -55,7 +55,7 @@ function Home() {
     setRequesting(station);
     const { error } = await supabase.from("station_access_requests").insert({
       user_id: (await supabase.auth.getUser()).data.user!.id,
-      station: station as "warehouse" | "wbs" | "paint" | "pbs" | "shortage" | "repair" | "cs" | "pdi",
+      station: station as "warehouse" | "wbs" | "paint" | "pbs" | "shortage" | "repair" | "cs" | "pdi" | "tcf" | "waiting_repair" | "tcf_offline" | "body_shop",
     });
     setRequesting(null);
     if (error) toast.error(error.message); else toast.success("Request sent for approval");
@@ -80,7 +80,7 @@ function Home() {
       <section>
         <h2 className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-3">Data-entry stations</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {STATIONS.filter(s => s.module === "data-entry").map(s => {
+          {STATIONS.filter(s => s.module === "data-entry" || s.code === "tcf" || s.code === "waiting_repair").map(s => {
             const unlocked = hasStation(s.code);
             const count = stationCounts[s.code] ?? 0;
             return (
@@ -126,6 +126,20 @@ function Home() {
                 </Link>
               );
             })}
+          </div>
+        </section>
+      )}
+
+      {(isStaff || isSuperuser) && (
+        <section>
+          <h2 className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-3">Tools</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <Link to="/restrictions"
+              className="rounded-xl border bg-card p-4 hover:border-primary/40 hover:shadow-[var(--shadow-pop)] transition-all">
+              <div className="h-10 w-10 rounded-lg bg-destructive/10 text-destructive grid place-items-center"><ShieldOff className="h-5 w-5" /></div>
+              <div className="mt-3 font-medium">Restrictions</div>
+              <div className="text-xs text-muted-foreground">Vehicle restrictions &amp; stop warnings</div>
+            </Link>
           </div>
         </section>
       )}

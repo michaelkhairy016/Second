@@ -16,7 +16,8 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { findBySuffix } from "@/lib/vin";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, FileSpreadsheet } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, FileSpreadsheet, Plus, X, Package } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import type { StationEventWithVehicle, StationCode } from "@/lib/db-types";
 import { useColors } from "@/hooks/use-colors";
 
@@ -34,10 +35,9 @@ function StationPage() {
   useEffect(() => {
     if (station && !hasStation(station.code)) { toast.error("You do not have access to this station"); nav({ to: "/" }); }
     if (station?.code === "warehouse") nav({ to: "/warehouse" });
-    if (station?.code === "shortage") nav({ to: "/shortages" });
   }, [station, hasStation, nav]);
 
-  if (!station || station.code === "warehouse" || station.code === "shortage") return null;
+  if (!station || station.code === "warehouse") return null;
 
   return (
     <div className="space-y-4 max-w-xl mx-auto">
@@ -51,10 +51,181 @@ function StationPage() {
       </div>
 
       <ScanForm station={station.code} />
-      {station.code === "wbs" && <BulkPasteSection station="wbs" />}
+      {["wbs", "body_shop"].includes(station.code) && <BulkPasteSection station={station.code as "wbs" | "body_shop"} />}
       {station.code === "pbs" && <PBSLotSummary />}
       {station.code === "paint" && <PaintWaitingVehicles />}
-      {station.code !== "paint" && <RecentEvents station={station.code} />}
+      {station.code !== "paint" && station.code !== "shortage" && <RecentEvents station={station.code} />}
+      {station.code === "shortage" && <ShortageStationView />}
+    </div>
+  );
+}
+
+interface IssueRow {
+  id: string;
+  title: string;
+  description: string | null;
+  severity: string;
+  status: string;
+  reported_by: string | null;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  created_at: string;
+}
+
+function VehicleConditionSection({ vehicleId, station }: { vehicleId: string; station: StationCode }) {
+  const [issues, setIssues] = useState<IssueRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showReportForm, setShowReportForm] = useState(false);
+  const [newIssueTitle, setNewIssueTitle] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [showResolved, setShowResolved] = useState(false);
+
+  const loadIssues = async () => {
+    const { data } = await supabase
+      .from("issues")
+      .select("*")
+      .eq("vehicle_id", vehicleId)
+      .order("created_at", { ascending: false });
+    setIssues((data as IssueRow[]) ?? []);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    setLoading(true);
+    loadIssues();
+    const ch = supabase.channel(`issues-${vehicleId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "issues", filter: `vehicle_id=eq.${vehicleId}` }, loadIssues)
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [vehicleId]);
+
+  const openIssues = issues.filter(i => i.status === "open" || i.status === "in_progress");
+  const resolvedIssues = issues.filter(i => i.status === "resolved" || i.status === "closed");
+  const hasOpenIssues = openIssues.length > 0;
+
+  const handleReportIssue = async () => {
+    const title = newIssueTitle.trim();
+    if (!title) return toast.error("Describe the issue");
+    setSubmitting(true);
+    try {
+      const user = (await supabase.auth.getUser()).data.user;
+      const { error } = await supabase.from("issues").insert({
+        vehicle_id: vehicleId,
+        station,
+        title,
+        severity: "medium",
+        status: "open",
+        reported_by: user?.id ?? null,
+      });
+      if (error) throw error;
+      setNewIssueTitle("");
+      setShowReportForm(false);
+      toast.success("Issue reported");
+      loadIssues();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleResolve = async (issueId: string) => {
+    try {
+      const user = (await supabase.auth.getUser()).data.user;
+      const { error } = await supabase.from("issues").update({
+        status: "resolved",
+        resolved_at: new Date().toISOString(),
+        resolved_by: user?.id ?? null,
+      }).eq("id", issueId);
+      if (error) throw error;
+      toast.success("Issue resolved");
+      loadIssues();
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="border rounded-md p-3">
+        <Skeleton className="h-5 w-40" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="border rounded-md p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          {hasOpenIssues ? (
+            <>
+              <AlertTriangle className="h-4 w-4 text-warning" />
+              <span className="text-warning">Issue ({openIssues.length} open)</span>
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="h-4 w-4 text-success" />
+              <span className="text-success">OK</span>
+            </>
+          )}
+        </div>
+        <Button variant="outline" size="sm" onClick={() => setShowReportForm(!showReportForm)}>
+          {showReportForm ? "Cancel" : "Report New Issue"}
+        </Button>
+      </div>
+
+      {showReportForm && (
+        <div className="space-y-2 pt-1">
+          <Input
+            value={newIssueTitle}
+            onChange={e => setNewIssueTitle(e.target.value)}
+            placeholder="Describe the issue (English / العربية)"
+            onKeyDown={e => { if (e.key === "Enter") handleReportIssue(); }}
+          />
+          <Button size="sm" disabled={submitting || !newIssueTitle.trim()} onClick={handleReportIssue}>
+            {submitting ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit Issue"}
+          </Button>
+        </div>
+      )}
+
+      {openIssues.length > 0 && (
+        <ul className="divide-y border rounded-md">
+          {openIssues.map(issue => (
+            <li key={issue.id} className="px-3 py-2 flex items-start justify-between gap-2 text-sm">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <Badge variant="warning" className="text-[10px] px-1">{issue.severity}</Badge>
+                  <span className="truncate">{issue.title}</span>
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  {new Date(issue.created_at).toLocaleString()}
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" className="shrink-0 text-xs" onClick={() => handleResolve(issue.id)}>
+                Resolve
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {resolvedIssues.length > 0 && (
+        <details open={showResolved} onToggle={e => setShowResolved((e.target as HTMLDetailsElement).open)}>
+          <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+            {resolvedIssues.length} resolved issue{resolvedIssues.length !== 1 ? "s" : ""}
+          </summary>
+          <ul className="divide-y border rounded-md mt-1">
+            {resolvedIssues.map(issue => (
+              <li key={issue.id} className="px-3 py-1.5 flex items-center justify-between text-xs text-muted-foreground">
+                <span className="truncate">{issue.title}</span>
+                <span className="shrink-0 ml-2">
+                  {issue.resolved_at ? new Date(issue.resolved_at).toLocaleTimeString() : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }
@@ -68,12 +239,23 @@ function ScanForm({ station }: { station: StationCode }) {
   const [busy, setBusy] = useState(false);
   const [lotCode, setLotCode] = useState<string | null>(null);
 
-  // Quality check fields
-  const [qualityStatus, setQualityStatus] = useState<"ok" | "issue">("ok");
-  const [issueText, setIssueText] = useState("");
-  const [pbsCondition, setPbsCondition] = useState<"ok" | "damaged" | "dismantled" | "missing_part">("ok");
-  const [pbsNotes, setPbsNotes] = useState("");
   const [lotShortageWarning, setLotShortageWarning] = useState<string | null>(null);
+
+  // Vehicle restrictions
+  const [restrictions, setRestrictions] = useState<Array<{ id: string; restriction: string; stop_at_station: string; status: string }>>([]);
+
+  useEffect(() => {
+    if (!picked?.id) { setRestrictions([]); return; }
+    let cancel = false;
+    (async () => {
+      const { data } = await supabase.from("vehicle_restrictions")
+        .select("id, restriction, stop_at_station, status")
+        .eq("vehicle_id", picked.id)
+        .eq("status", "active");
+      if (!cancel) setRestrictions((data ?? []) as typeof restrictions);
+    })();
+    return () => { cancel = true; };
+  }, [picked?.id]);
 
   useEffect(() => {
     if (picked?.lot_id && station === "pbs") {
@@ -103,13 +285,11 @@ function ScanForm({ station }: { station: StationCode }) {
     return () => { cancel = true; };
   }, [debouncedSuffix]);
 
-  useEffect(() => { setPicked(null); setColor(""); setQualityStatus("ok"); setIssueText(""); setPbsCondition("ok"); setPbsNotes(""); setLotShortageWarning(null); }, [debouncedSuffix]);
+  useEffect(() => { setPicked(null); setColor(""); setLotShortageWarning(null); setRestrictions([]); }, [debouncedSuffix]);
 
   const submit = async (kind: "in" | "out") => {
     if (!picked) return toast.error("Pick a VIN first");
     if (station === "paint" && !color) return toast.error("Color required");
-    if (station === "wbs" && kind === "in" && qualityStatus === "issue" && !issueText.trim()) return toast.error("Describe the issue");
-    if (station === "pbs" && kind === "in" && pbsCondition !== "ok" && !pbsNotes.trim()) return toast.error("Add notes about the condition");
     setBusy(true);
     try {
       // Paint station: special handling - no station_events, only update vehicle
@@ -133,9 +313,18 @@ function ScanForm({ station }: { station: StationCode }) {
         // Only update vehicle, no station_events for paint
         await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked.id);
         toast.success(`Color assigned: ${picked.vin.slice(-5)}`);
-        setSuffix(""); setPicked(null); setColor(""); setQualityStatus("ok"); setIssueText(""); setPbsCondition("ok"); setPbsNotes("");
+        setSuffix(""); setPicked(null); setColor("");
         setBusy(false);
         return;
+      }
+
+      // Restriction confirmation: if vehicle has active restrictions matching this station, confirm before proceeding
+      const matchingRestrictions = restrictions.filter(r => r.stop_at_station === station);
+      if (matchingRestrictions.length > 0) {
+        const ok = window.confirm(
+          `⚠️ This vehicle has restrictions at this station:\n${matchingRestrictions.map(r => r.restriction).join('\n')}\n\nProceed anyway?`
+        );
+        if (!ok) { setBusy(false); return; }
       }
 
       // PBS lot-shortage block
@@ -144,59 +333,33 @@ function ScanForm({ station }: { station: StationCode }) {
         if (!ok) { setBusy(false); return; }
       }
 
-      // Build meta JSON for quality checks
-      const meta: Record<string, string> = {};
-      if (station === "wbs" && kind === "in") {
-        meta.quality = qualityStatus;
-        if (qualityStatus === "issue") meta.issue = issueText.trim();
-      }
-      if (station === "pbs" && kind === "in") {
-        meta.condition = pbsCondition;
-        if (pbsNotes.trim()) meta.notes = pbsNotes.trim();
-      }
-
       const user = (await supabase.auth.getUser()).data.user;
       const { error } = await supabase.from("station_events").insert({
         vehicle_id: picked.id, station, kind, color_used_id: null, recorded_by: user?.id, source: "manual",
-        meta: Object.keys(meta).length > 0 ? meta : null,
+        meta: null,
       });
       if (error) throw error;
 
-      // Create issue record for WBS issues
-      if (station === "wbs" && kind === "in" && qualityStatus === "issue") {
-        await supabase.from("issues").insert({
-          vehicle_id: picked.id, station: "wbs", title: issueText.trim(),
-          severity: "medium", status: "open",
-        });
-      }
+      // Determine next station: only advance for specific OUT flows
+      const nextStationMap: Partial<Record<StationCode, StationCode>> = {
+        wbs: "paint",
+        pbs: "tcf",
+        tcf: "waiting_repair",
+        waiting_repair: "repair",
+        repair: "cs",
+      };
+      const nextStation = (kind === "out" && nextStationMap[station]) ? nextStationMap[station]! : station;
 
-      // Create issue record for PBS problems
-      if (station === "pbs" && kind === "in" && pbsCondition !== "ok") {
-        const condLabel = pbsCondition === "damaged" ? "Damaged" : pbsCondition === "dismantled" ? "Dismantled" : "Missing part";
-        await supabase.from("issues").insert({
-          vehicle_id: picked.id, station: "pbs", title: `${condLabel}: ${pbsNotes.trim()}`,
-          severity: pbsCondition === "missing_part" ? "high" : "medium", status: "open",
-        });
-      }
-
-      // Determine next station
-      let nextStation: typeof station | "paint" = station;
-      if (station === "wbs" && kind === "out") nextStation = "paint";
-      else if (station === "pbs" && kind === "in" && picked.current_station === "paint") nextStation = "pbs";
-      else nextStation = station;
-
-      await supabase.from("vehicles").update({ current_station: nextStation as any }).eq("id", picked.id);
+      await supabase.from("vehicles").update({ current_station: nextStation }).eq("id", picked.id);
 
       if (picked.is_lot_tail) toast.warning(`⚠️ Lot-tail vehicle: ${picked.tail_note ?? "Flagged"}`);
       if (lotShortageWarning && kind === "out") toast.warning(`⚠️ Vehicle released despite lot shortages`);
       toast.success(`Recorded: ${picked.vin.slice(-5)} ${kind.toUpperCase()}`);
-      setSuffix(""); setPicked(null); setColor(""); setQualityStatus("ok"); setIssueText(""); setPbsCondition("ok"); setPbsNotes("");
+      setSuffix(""); setPicked(null); setColor("");
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
 
   const needsColor = station === "paint";
-  const needsWbsCheck = station === "wbs";
-  const needsPbsCheck = station === "pbs";
 
   return (
     <Card>
@@ -240,6 +403,18 @@ function ScanForm({ station }: { station: StationCode }) {
             {lotShortageWarning && (
               <div className="flex items-center gap-1 text-destructive text-xs mt-1"><AlertTriangle className="h-3 w-3" /> {lotShortageWarning}</div>
             )}
+            {restrictions.length > 0 && (
+              <div className="mt-2 rounded-md border-2 border-destructive bg-destructive/10 p-2">
+                <div className="flex items-center gap-1 text-destructive text-xs font-bold">
+                  <AlertTriangle className="h-4 w-4" /> RESTRICTED VEHICLE
+                </div>
+                <ul className="mt-1 text-xs space-y-0.5">
+                  {restrictions.map(r => (
+                    <li key={r.id}>• {r.restriction} → Stop at {stationByCode(r.stop_at_station)?.label ?? r.stop_at_station}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
 
@@ -247,39 +422,8 @@ function ScanForm({ station }: { station: StationCode }) {
           <ColorPicker color={color} setColor={setColor} />
         )}
 
-        {/* WBS quality check */}
-        {needsWbsCheck && picked && (
-          <div className="border rounded-md p-3 space-y-2">
-            <Label className="text-sm font-medium">Vehicle condition</Label>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setQualityStatus("ok")} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${qualityStatus === "ok" ? "bg-success/20 border-success text-success" : "bg-muted border-border hover:bg-muted/80"}`}>
-                <CheckCircle2 className="h-4 w-4 inline mr-1" /> OK
-              </button>
-              <button type="button" onClick={() => setQualityStatus("issue")} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${qualityStatus === "issue" ? "bg-warning/20 border-warning text-warning" : "bg-muted border-border hover:bg-muted/80"}`}>
-                <AlertTriangle className="h-4 w-4 inline mr-1" /> Issue
-              </button>
-            </div>
-            {qualityStatus === "issue" && (
-              <Textarea rows={2} value={issueText} onChange={e => setIssueText(e.target.value)} placeholder="Describe the issue (English / العربية)" />
-            )}
-          </div>
-        )}
-
-        {/* PBS condition check */}
-        {needsPbsCheck && picked && (
-          <div className="border rounded-md p-3 space-y-2">
-            <Label className="text-sm font-medium">Body condition</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {(["ok", "damaged", "dismantled", "missing_part"] as const).map(c => (
-                <button key={c} type="button" onClick={() => setPbsCondition(c)} className={`py-2 rounded-md border text-xs font-medium transition-colors ${pbsCondition === c ? (c === "ok" ? "bg-success/20 border-success text-success" : c === "damaged" ? "bg-warning/20 border-warning text-warning" : c === "dismantled" ? "bg-destructive/20 border-destructive text-destructive" : "bg-info/20 border-info text-info") : "bg-muted border-border hover:bg-muted/80"}`}>
-                  {c === "ok" ? "OK ✓" : c === "damaged" ? "Damaged" : c === "dismantled" ? "Dismantled" : "Missing Part"}
-                </button>
-              ))}
-            </div>
-            {pbsCondition !== "ok" && (
-              <Textarea rows={2} value={pbsNotes} onChange={e => setPbsNotes(e.target.value)} placeholder="Describe the condition (English / العربية)" />
-            )}
-          </div>
+        {station !== "paint" && picked && (
+          <VehicleConditionSection vehicleId={picked.id} station={station} />
         )}
 
         <div className="flex gap-2 pt-1">
@@ -478,6 +622,215 @@ function PBSLotSummary() {
             </li>
           ))}
         </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
+// Shortage station types
+interface ShortageRecord {
+  id: string;
+  parts: string[];
+  part_type: string | null;
+  responsibility: string | null;
+  received_by: string | null;
+  released_by: string | null;
+  status: string;
+  notes: string | null;
+  created_at: string;
+  cleared_at: string | null;
+}
+
+function ShortageStationView() {
+  const [suffix, setSuffix] = useState("");
+  const debouncedSuffix = useDebouncedValue(suffix, 300);
+  const [matches, setMatches] = useState<Awaited<ReturnType<typeof findBySuffix>>>([]);
+  const [picked, setPicked] = useState<typeof matches[number] | null>(null);
+  const [mode, setMode] = useState<"in" | "out">("in");
+  const [parts, setParts] = useState("");
+  const [notes, setNotes] = useState("");
+  const [partType, setPartType] = useState<"ckd" | "local">("ckd");
+  const [responsibility, setResponsibility] = useState<"afa" | "supplier">("supplier");
+  const [receivedBy, setReceivedBy] = useState("");
+  const [shortages, setShortages] = useState<ShortageRecord[]>([]);
+  const [stationVehicles, setStationVehicles] = useState<Array<{ vin: string; vin_suffix: string; id: string }>>([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (debouncedSuffix.trim().length < 3) { setMatches([]); return; }
+    let cancel = false;
+    findBySuffix(debouncedSuffix).then(d => { if (!cancel) setMatches(d); }).catch(e => toast.error(e.message));
+    return () => { cancel = true; };
+  }, [debouncedSuffix]);
+
+  useEffect(() => {
+    setPicked(null); setParts(""); setNotes(""); setPartType("ckd"); setResponsibility("supplier"); setReceivedBy(""); setShortages([]);
+  }, [debouncedSuffix]);
+
+  useEffect(() => {
+    if (!picked) { setShortages([]); return; }
+    let cancel = false;
+    const load = async () => {
+      const { data } = await supabase.from("shortages")
+        .select("id, parts, part_type, responsibility, received_by, released_by, status, notes, created_at, cleared_at")
+        .eq("vehicle_id", picked.id)
+        .order("created_at", { ascending: false });
+      if (!cancel) setShortages((data ?? []) as unknown as ShortageRecord[]);
+    };
+    load();
+    const ch = supabase.channel(`shortages-${picked.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "shortages", filter: `vehicle_id=eq.${picked.id}` }, load)
+      .subscribe();
+    return () => { cancel = true; supabase.removeChannel(ch); };
+  }, [picked]);
+
+  useEffect(() => {
+    const load = async () => {
+      const { data } = await supabase.from("vehicles").select("id, vin, vin_suffix").eq("current_station", "shortage").order("created_at", { ascending: true });
+      setStationVehicles(data ?? []);
+    };
+    load();
+    const ch = supabase.channel("shortage-station-vehicles")
+      .on("postgres_changes", { event: "*", schema: "public", table: "vehicles", filter: "current_station=eq.shortage" }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, []);
+
+  const resetScan = () => { setSuffix(""); setPicked(null); setMatches([]); setParts(""); setNotes(""); setPartType("ckd"); setResponsibility("supplier"); setReceivedBy(""); };
+
+  const submitIn = async () => {
+    if (!picked) return toast.error("Pick a VIN first");
+    const partList = parts.split(",").map(s => s.trim()).filter(Boolean);
+    if (partList.length === 0) return toast.error("List at least one part");
+    setBusy(true);
+    try {
+      const user = (await supabase.auth.getUser()).data.user;
+      const { error: se } = await supabase.from("shortages").insert({ vehicle_id: picked.id, parts: partList, notes: notes || null, created_by: user?.id, part_type: partType, responsibility, received_by: receivedBy || null });
+      if (se) throw se;
+      const { error: ev } = await supabase.from("station_events").insert({ vehicle_id: picked.id, station: "shortage", kind: "in", recorded_by: user?.id, source: "manual" });
+      if (ev) throw ev;
+      await supabase.from("vehicles").update({ current_station: "shortage" } as any).eq("id", picked.id);
+      toast.success(`Shortage logged: ${picked.vin.slice(-5)}`);
+      resetScan();
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+
+  const clearShortage = async (shortageId: string, releasedBy: string) => {
+    if (!picked) return;
+    setBusy(true);
+    try {
+      const user = (await supabase.auth.getUser()).data.user;
+      const { error: se } = await supabase.from("shortages").update({ status: "cleared" as any, cleared_at: new Date().toISOString(), released_by: releasedBy || null, cleared_by: user?.id ?? null } as any).eq("id", shortageId);
+      if (se) throw se;
+      const { error: ev } = await supabase.from("station_events").insert({ vehicle_id: picked.id, station: "shortage", kind: "out", recorded_by: user?.id, source: "manual" });
+      if (ev) throw ev;
+      toast.success("Shortage cleared");
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+
+  const openShortages = shortages.filter(s => s.status === "open");
+
+  return (
+    <div className="space-y-4">
+      <ShortageStationSummary vehicles={stationVehicles} />
+      <Card>
+        <CardHeader><CardTitle className="text-base flex items-center gap-2"><Package className="h-4 w-4" /> Scan VIN suffix</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-1.5"><Label htmlFor="shortage-vin">Last 4–5 digits</Label><Input id="shortage-vin" autoFocus value={suffix} onChange={e => setSuffix(e.target.value)} placeholder="e.g. 12345" inputMode="numeric" className="text-lg font-mono tracking-widest" /></div>
+          {matches.length > 0 && !picked && (
+            <div className="border rounded-md divide-y">
+              {matches.map(m => (<button key={m.id} onClick={() => setPicked(m)} className="w-full text-left px-3 py-2 hover:bg-muted flex items-center justify-between text-sm"><span className="font-mono">…{m.vin.slice(-8)}</span><span className="text-xs text-muted-foreground">{m.current_station ?? "—"}</span></button>))}
+            </div>
+          )}
+          {picked && (<div className="rounded-md border bg-muted/40 p-3 text-sm space-y-1"><div className="font-mono text-base">{picked.vin}</div><div className="text-xs text-muted-foreground">At <b>{picked.current_station ?? "—"}</b></div></div>)}
+          {picked && (
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setMode("in")} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${mode === "in" ? "bg-info/20 border-info text-info" : "bg-muted border-border hover:bg-muted/80"}`}><Plus className="h-4 w-4 inline mr-1" /> Log Shortage (IN)</button>
+              <button type="button" onClick={() => setMode("out")} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${mode === "out" ? "bg-success/20 border-success text-success" : "bg-muted border-border hover:bg-muted/80"}`}><CheckCircle2 className="h-4 w-4 inline mr-1" /> Clear & Release (OUT)</button>
+            </div>
+          )}
+          {picked && mode === "in" && (
+            <div className="border rounded-md p-3 space-y-3">
+              <Label className="text-sm font-medium">Log new shortage</Label>
+              <div className="space-y-1.5"><Label>Missing parts (comma-separated)</Label><Input value={parts} onChange={e => setParts(e.target.value)} placeholder="exhaust pipe, rear wiper / قطعة غيار" /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5"><Label>Part type</Label><div className="flex gap-2"><button type="button" onClick={() => setPartType("ckd")} className={`flex-1 py-2 rounded-md border text-sm font-medium ${partType === "ckd" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>CKD</button><button type="button" onClick={() => setPartType("local")} className={`flex-1 py-2 rounded-md border text-sm font-medium ${partType === "local" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>Local</button></div></div>
+                <div className="space-y-1.5"><Label>Responsibility</Label><div className="flex gap-2"><button type="button" onClick={() => setResponsibility("afa")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "afa" ? "bg-warning/20 border-warning text-warning" : "bg-muted border-border"}`}>Against AFA</button><button type="button" onClick={() => setResponsibility("supplier")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "supplier" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>Against Supplier</button></div></div>
+              </div>
+              <div className="space-y-1.5"><Label>Received by (name)</Label><Input value={receivedBy} onChange={e => setReceivedBy(e.target.value)} placeholder="اسم المستلم / Person who delivered" /></div>
+              <div className="space-y-1.5"><Label>Notes (optional)</Label><Textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Additional details / تفاصيل إضافية" /></div>
+              <Button disabled={busy} className="w-full" onClick={submitIn}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Plus className="h-4 w-4 mr-1" /> Log Shortage</>}</Button>
+            </div>
+          )}
+          {picked && mode === "out" && (
+            <div className="border rounded-md p-3 space-y-3">
+              <Label className="text-sm font-medium">Open shortages for this vehicle</Label>
+              {openShortages.length === 0 ? (<p className="text-sm text-muted-foreground py-2">No open shortages. Use IN tab to log one.</p>) : (
+                <ul className="divide-y">
+                  {openShortages.map(s => (
+                    <li key={s.id} className="py-3">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm space-y-1">
+                          <div className="font-mono text-xs">{(s.parts as string[]).join(", ")}</div>
+                          <div className="flex gap-1.5"><Badge variant={s.part_type === "ckd" ? "info" : "secondary"} className="text-[10px] px-1.5">{s.part_type === "ckd" ? "CKD" : "Local"}</Badge><Badge variant={s.responsibility === "afa" ? "warning" : "muted"} className="text-[10px] px-1.5">{s.responsibility === "afa" ? "Against AFA" : "Against Supplier"}</Badge></div>
+                          {s.received_by && <div className="text-xs text-muted-foreground">Received by: {s.received_by}</div>}
+                          {s.notes && <div className="text-xs text-muted-foreground">{s.notes}</div>}
+                          <div className="text-[10px] text-muted-foreground">{new Date(s.created_at).toLocaleString()}</div>
+                        </div>
+                        <ShortageClearButton onClear={(sig) => clearShortage(s.id, sig)} disabled={busy} />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {picked && shortages.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Shortage history ({shortages.length})</CardTitle></CardHeader>
+              <CardContent>
+                <ul className="divide-y text-xs">
+                  {shortages.map(s => (
+                    <li key={s.id} className="py-2 flex items-center justify-between">
+                      <div className="min-w-0"><div className="font-mono">{(s.parts as string[]).join(", ")}</div><div className="text-muted-foreground mt-0.5">{s.part_type === "ckd" ? "CKD" : "Local"} · {s.responsibility === "afa" ? "AFA" : "Supplier"}{s.received_by ? ` · Rec: ${s.received_by}` : ""}{s.released_by ? ` · Rel: ${s.released_by}` : ""}</div></div>
+                      <div className="shrink-0 ml-2"><Badge variant={s.status === "open" ? "destructive" : "success"} className="text-[10px] px-1.5">{s.status === "open" ? "OPEN" : "CLEARED"}</Badge></div>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+          {picked && (<Button variant="ghost" size="sm" className="text-muted-foreground" onClick={resetScan}><X className="h-4 w-4 mr-1" /> Reset scan</Button>)}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function ShortageClearButton({ onClear, disabled }: { onClear: (signature: string) => void; disabled: boolean }) {
+  const [signature, setSignature] = useState("");
+  const [open, setOpen] = useState(false);
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger asChild><Button size="sm" variant="outline" disabled={disabled}><CheckCircle2 className="h-4 w-4 mr-1" /> Clear & Release</Button></AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader><AlertDialogTitle>Clear this shortage?</AlertDialogTitle><AlertDialogDescription>Mark as cleared and release the vehicle.</AlertDialogDescription></AlertDialogHeader>
+        <div className="space-y-2 py-2"><Label className="text-sm">Released by (name / signature)</Label><Input value={signature} onChange={e => setSignature(e.target.value)} placeholder="اسم السائق / Driver name" /></div>
+        <AlertDialogFooter><AlertDialogCancel onClick={() => setSignature("")}>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { onClear(signature); setSignature(""); setOpen(false); }}>Clear shortage</AlertDialogAction></AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function ShortageStationSummary({ vehicles }: { vehicles: Array<{ vin: string; vin_suffix: string; id: string }> }) {
+  if (vehicles.length === 0) {
+    return (<Card><CardContent className="py-4"><EmptyState icon={Package} title="No vehicles at shortage" description="Vehicles will appear here when they have open shortages." /></CardContent></Card>);
+  }
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">At Shortage Station ({vehicles.length})</CardTitle></CardHeader>
+      <CardContent>
+        <ul className="divide-y text-sm">{vehicles.map(v => (<li key={v.id} className="py-2 flex items-center justify-between"><span className="font-mono text-xs">…{v.vin.slice(-6)}</span><Badge variant="secondary" className="text-[10px]">shortage</Badge></li>))}</ul>
       </CardContent>
     </Card>
   );

@@ -36,9 +36,9 @@ function getRangeStart(range: TimeRange): Date {
 }
 
 function Page() {
-  const { isSuperuser } = useAuth();
+  const { isSuperuser, isStaff, isStatus } = useAuth();
   const nav = useNavigate();
-  useEffect(() => { if (!isSuperuser) nav({ to: "/" }); }, [isSuperuser, nav]);
+  useEffect(() => { if (!isSuperuser && !isStaff && !isStatus) nav({ to: "/" }); }, [isSuperuser, isStaff, isStatus, nav]);
 
   const { getCode } = useColors();
 

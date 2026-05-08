@@ -24,6 +24,7 @@ export type ModelTrim = Tables<"model_trims">;
 export type FactorySnapshot = Tables<"factory_snapshots">;
 export type AppSetting = Tables<"app_settings">;
 export type ProductionPlan = Tables<"production_plans">;
+export type VehicleRestriction = Tables<"vehicle_restrictions">;
 
 // Insert types
 export type VehicleInsert = TablesInsert<"vehicles">;

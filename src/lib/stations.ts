@@ -19,10 +19,13 @@ export const STATIONS: StationDef[] = [
   { code: "wbs",       label: "WBS",       short: "WBS", description: "White body in/out", icon: Frame, module: "data-entry" },
   { code: "paint",     label: "Paint",     short: "PT",  description: "Color application", icon: PaintBucket, module: "data-entry" },
   { code: "pbs",       label: "PBS",       short: "PBS", description: "Painted body buffer", icon: ParkingSquare, module: "data-entry" },
-  { code: "shortage",  label: "Shortage",  short: "SH",  description: "Missing parts", icon: AlertTriangle, module: "data-entry" },
+  { code: "tcf",              label: "TCF (General Assembly)", short: "TCF",  description: "General assembly", icon: Cog, module: "bulk" },
+  { code: "waiting_repair",   label: "Waiting Repair",         short: "WR",   description: "Awaiting repair", icon: Wrench, module: "bulk" },
   { code: "repair",    label: "Repair",    short: "RP",  description: "Bulk paste", icon: Wrench, module: "bulk" },
   { code: "cs",        label: "CS / QC",   short: "CS",  description: "Quality inspection", icon: ClipboardCheck, module: "bulk" },
   { code: "pdi",       label: "PDI",       short: "PDI", description: "Pre-delivery", icon: Truck, module: "bulk" },
+  { code: "shortage",  label: "Shortage",  short: "SH",  description: "Parts buffer (beside flow)", icon: AlertTriangle, module: "data-entry" },
+  { code: "tcf_offline", label: "TCF Offline", short: "TFO", description: "Offline TCF (staff only)", icon: AlertTriangle, module: "bulk" },
 ];
 
 export const stationByCode = (c: string) => STATIONS.find(s => s.code === c);

@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useTheme } from "@/hooks/use-theme";
-import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Search, Menu, AlertCircle, Settings, GitBranch, Eye, Sun, Moon, CalendarDays, ShieldCheck, Clock } from "lucide-react";
+import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Search, Menu, AlertCircle, Settings, GitBranch, Eye, Sun, Moon, CalendarDays, ShieldCheck, Clock, ShieldOff } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import type { ReactNode } from "react";
@@ -64,10 +64,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       {link("/lookup", "Lookup", Search)}
       {!isStatus && link("/requests", "My Requests", ClipboardList)}
       {!isStatus && link("/issues", "Issues", AlertCircle)}
+      {(isSuperuser || isStaff) && link("/restrictions", "Restrictions", ShieldOff)}
       {isStatus && link("/status", "Status", Eye)}
-      {(isSuperuser || isStaff || isStatus) && link("/delayed", "Delayed", Clock)}
-      {isSuperuser && link("/analytics", "Analytics", BarChart3)}
-      {(isSuperuser || isStaff) && link("/admin", "Admin", Users)}
+      {(isSuperuser || isStaff) && link("/delayed", "Delayed", Clock)}
+      {(isSuperuser || isStaff || isStatus) && link("/analytics", "Analytics", BarChart3)}
+      {isSuperuser && link("/admin", "Admin", Users)}
       {isSuperuser && link("/settings", "Settings", Settings)}
       {link("/calendar", "Calendar", CalendarDays)}
     </>
@@ -128,9 +129,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           {link("/lookup", "Lookup", Search)}
           {!isStatus && link("/requests", "Requests", ClipboardList)}
           {!isStatus && link("/issues", "Issues", AlertCircle)}
+          {(isSuperuser || isStaff) && link("/restrictions", "Restrictions", ShieldOff)}
           {isStatus && link("/status", "Status", Eye)}
-          {isSuperuser && link("/analytics", "Analytics", BarChart3)}
-          {(isSuperuser || isStaff) && link("/admin", "Admin", Users)}
+          {(isSuperuser || isStaff) && link("/delayed", "Delayed", Clock)}
+          {(isSuperuser || isStaff || isStatus) && link("/analytics", "Analytics", BarChart3)}
+          {isSuperuser && link("/admin", "Admin", Users)}
           {isSuperuser && link("/settings", "Settings", Settings)}
           {link("/calendar", "Calendar", CalendarDays)}
         </nav>

@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { COLOR_CODES } from "@/lib/stations";
 import { exportToCSV } from "@/lib/export";
 import { JobOrderPrintView } from "@/components/JobOrderPrintView";
-import type { Lot, JobOrder } from "@/lib/db-types";
+import type { Lot, JobOrder, Engine } from "@/lib/db-types";
 import { useColors } from "@/hooks/use-colors";
 
 export const Route = createFileRoute("/warehouse")({
@@ -28,18 +28,22 @@ export const Route = createFileRoute("/warehouse")({
 function Page() {
   const { hasStation } = useAuth();
   const nav = useNavigate();
+  const { getCode, list: allColors } = useColors();
   useEffect(() => { if (!hasStation("warehouse")) { toast.error("No access"); nav({ to: "/" }); } }, [hasStation, nav]);
 
   const [lots, setLots] = useState<Lot[]>([]);
   const [jobs, setJobs] = useState<JobOrder[]>([]);
   const [printJob, setPrintJob] = useState<JobOrder | null>(null);
   const [printLot, setPrintLot] = useState<Lot | null>(null);
+  const [printEngines, setPrintEngines] = useState<Engine[]>([]);
   const [lotVehicleCounts, setLotVehicleCounts] = useState<Record<string, number>>({});
 
   const handlePrint = async (job: JobOrder) => {
-    const { data: lot } = await supabase.from("lots").select("*").eq("id", job.lot_id).maybeSingle();
+    const { data: lot } = job.lot_id ? await supabase.from("lots").select("*").eq("id", job.lot_id).maybeSingle() : { data: null as Lot | null };
+    const { data: engines } = await supabase.from("engines").select("*").eq("job_order_id", job.id);
     setPrintJob(job);
     setPrintLot(lot);
+    setPrintEngines(engines ?? []);
     setTimeout(() => window.print(), 150);
   };
   const reload = async () => {
@@ -78,9 +82,10 @@ function Page() {
         <p className="text-muted-foreground text-sm">Receive lots and split into job orders.</p>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4">
+      <div className="grid md:grid-cols-3 gap-4">
         <NewLot onDone={reload} />
         <NewJobOrder lots={lots} onDone={reload} />
+        <NewPaintJobOrder onDone={reload} />
       </div>
 
       <Card>
@@ -156,9 +161,12 @@ function Page() {
             <ul className="divide-y text-sm">
               {jobs.map(j => (
                 <li key={j.id} className="py-2 flex justify-between items-center">
-                  <span><b>{j.job_code}</b> · {j.units} cars</span>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground font-mono">{Object.entries(j.color_plan ?? {}).map(([k,v]) => `${k}:${v}`).join(" ")}</span>
+                    <span><b>{j.job_code}</b> · {j.units} cars</span>
+                    {(j as any).is_contract && <Badge variant="outline" className="text-xs">Contract: {(j as any).contract_company || "—"}</Badge>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground font-mono">{Object.entries(j.color_plan ?? {}).map(([k,v]) => `${getCode(k)}:${v}`).join(" ")}</span>
                     <Button variant="outline" size="sm" className="h-7 no-print" onClick={() => handlePrint(j)}><Printer className="h-3.5 w-3.5 mr-1" />Print</Button>
                   </div>
                 </li>
@@ -169,7 +177,7 @@ function Page() {
       </Card>
 
       {/* Print area — hidden on screen, visible only when printing */}
-      {printJob && <JobOrderPrintView jobOrder={printJob} lot={printLot} />}
+      {printJob && <JobOrderPrintView jobOrder={printJob} lot={printLot} engines={printEngines} colors={allColors} isContract={(printJob as any).is_contract} contractCompany={(printJob as any).contract_company} />}
     </div>
   );
 }
@@ -294,6 +302,126 @@ function NewJobOrder({ lots, onDone }: { lots: Lot[]; onDone: () => void }) {
           <div className="space-y-1.5"><Label>Engine numbers (one per line, from Excel)</Label><Textarea value={engines} onChange={e => setEngines(e.target.value)} className="font-mono text-xs" rows={3} placeholder="Paste engine numbers, one per line" /></div>
           <Button disabled={busy} type="submit" className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create job order"}</Button>
           <p className="text-xs text-muted-foreground">Codes: {Object.entries(COLOR_CODES).map(([k,v]) => `${k}=${v}`).join(", ")}</p>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function NewPaintJobOrder({ onDone }: { onDone: () => void }) {
+  const { activeList } = useColors();
+  const [company, setCompany] = useState("");
+  const [code, setCode] = useState("");
+  const [units, setUnits] = useState(25);
+  const [modelYear, setModelYear] = useState("2026");
+  const [vins, setVins] = useState("");
+  const [engines, setEngines] = useState("");
+  const [colorPlan, setColorPlan] = useState("11U:10\n55U:15");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const plan: Record<string, number> = {};
+      colorPlan.split("\n").map(s => s.trim()).filter(Boolean).forEach(line => {
+        const [k, v] = line.split(":").map(s => s.trim());
+        if (k && !isNaN(+v)) plan[k.toUpperCase()] = +v;
+      });
+      const vinList = vins.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length === 17);
+      if (vinList.length !== units) throw new Error(`VIN count (${vinList.length}) must equal units (${units})`);
+
+      // Check for suffix collisions with completed vehicles
+      const suffixes = vinList.map(v => v.slice(-5));
+      const { data: completed } = await supabase.from("vehicles").select("vin_suffix").not("completed_at", "is", null).in("vin_suffix", suffixes);
+      if (completed && completed.length > 0) {
+        const colliding = completed.map(c => c.vin_suffix).join(", ");
+        toast.warning(`VIN suffix collision with completed vehicles: ${colliding}. Proceeding anyway.`);
+      }
+
+      // Map color codes to UUIDs for job_order.color_plan
+      const planWithUuids: Record<string, number> = {};
+      for (const [code, qty] of Object.entries(plan)) {
+        const color = activeList.find(c => c.code === code);
+        if (color) planWithUuids[color.id] = qty;
+        else toast.warning(`Color code ${code} not found, skipping`);
+      }
+      if (Object.keys(planWithUuids).length === 0) throw new Error("No valid color codes found");
+
+      const { data: jo, error } = await supabase.from("job_orders").insert({
+        lot_id: null,
+        is_contract: true,
+        contract_company: company.trim(),
+        job_code: code.trim(),
+        units,
+        color_plan: planWithUuids,
+        vin_sequence: vinList,
+        status: "active",
+        model_year: modelYear,
+      }).select().single();
+      if (error) throw error;
+
+      // Create vehicles with current_station = "wbs" and lot_id = null
+      const planFlat: string[] = [];
+      Object.entries(planWithUuids).forEach(([uuid, n]) => { for (let i = 0; i < n; i++) planFlat.push(uuid); });
+      while (planFlat.length < units) planFlat.push(Object.keys(planWithUuids)[0]);
+
+      const rows = vinList.map((vin, i) => ({
+        vin,
+        vin_suffix: vin.slice(-5),
+        lot_id: null,
+        job_order_id: jo.id,
+        planned_color_id: planFlat[i] ?? null,
+        current_station: "wbs" as const,
+      }));
+      const { error: ve } = await supabase.from("vehicles").insert(rows);
+      if (ve) throw ve;
+
+      // Create engines if provided
+      const engineList = engines.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length >= 4);
+      if (engineList.length > 0) {
+        const engineRows = engineList.map(en => ({
+          engine_number: en,
+          engine_suffix: en.slice(-4),
+          lot_id: null,
+          job_order_id: jo.id,
+          status: "available" as const,
+        }));
+        const { error: ee } = await supabase.from("engines").insert(engineRows);
+        if (ee) throw ee;
+      }
+
+      toast.success(`Paint Job Order + ${vinList.length} vehicles${engineList.length > 0 ? ` + ${engineList.length} engines` : ""} created`);
+      setCompany(""); setCode(""); setVins(""); setEngines(""); onDone();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">New Paint Job Order (Contract)</CardTitle></CardHeader>
+      <CardContent>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="space-y-1.5"><Label>Company name</Label><Input value={company} onChange={e => setCompany(e.target.value)} placeholder="External Company Ltd" required /></div>
+          <div className="space-y-1.5"><Label>Job code</Label><Input value={code} onChange={e => setCode(e.target.value)} placeholder="PJ-001-A" required /></div>
+          <div className="space-y-1.5"><Label>Units</Label><Input type="number" min={1} value={units} onChange={e => setUnits(+e.target.value)} required /></div>
+          <div className="space-y-1.5"><Label>Model year</Label>
+            <Select value={modelYear} onValueChange={setModelYear}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="2026">2026</SelectItem>
+                <SelectItem value="2027">2027</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5"><Label>Color plan (CODE:count per line)</Label><Textarea value={colorPlan} onChange={e => setColorPlan(e.target.value)} className="font-mono text-xs" rows={4} /></div>
+          <div className="space-y-1.5"><Label>VINs (one per line, 17 chars)</Label><Textarea value={vins} onChange={e => setVins(e.target.value)} className="font-mono text-xs" rows={4} /></div>
+          <div className="space-y-1.5"><Label>Engine numbers (optional, one per line)</Label><Textarea value={engines} onChange={e => setEngines(e.target.value)} className="font-mono text-xs" rows={3} placeholder="Paste engine numbers, one per line" /></div>
+          <Button disabled={busy} type="submit" className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Plus className="h-4 w-4 mr-1" /> Create Paint Job Order</>}</Button>
+          <p className="text-xs text-muted-foreground">Contract vehicles arrive at WBS, get painted, then leave. No lot assignment needed.</p>
         </form>
       </CardContent>
     </Card>

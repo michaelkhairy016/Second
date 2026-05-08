@@ -23,6 +23,7 @@ import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as RestrictionsRouteImport } from './routes/restrictions'
 import { Route as StationCodeRouteImport } from './routes/station.$code'
 import { Route as BulkCodeRouteImport } from './routes/bulk.$code'
 
@@ -96,6 +97,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RestrictionsRoute = RestrictionsRouteImport.update({
+  id: '/restrictions',
+  path: '/restrictions',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StationCodeRoute = StationCodeRouteImport.update({
   id: '/station/$code',
   path: '/station/$code',
@@ -118,6 +124,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/lookup': typeof LookupRoute
   '/requests': typeof RequestsRoute
+  '/restrictions': typeof RestrictionsRoute
   '/settings': typeof SettingsRoute
   '/shortages': typeof ShortagesRoute
   '/status': typeof StatusRoute
@@ -136,6 +143,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/lookup': typeof LookupRoute
   '/requests': typeof RequestsRoute
+  '/restrictions': typeof RestrictionsRoute
   '/settings': typeof SettingsRoute
   '/shortages': typeof ShortagesRoute
   '/status': typeof StatusRoute
@@ -155,6 +163,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/lookup': typeof LookupRoute
   '/requests': typeof RequestsRoute
+  '/restrictions': typeof RestrictionsRoute
   '/settings': typeof SettingsRoute
   '/shortages': typeof ShortagesRoute
   '/status': typeof StatusRoute
@@ -175,6 +184,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/lookup'
     | '/requests'
+    | '/restrictions'
     | '/settings'
     | '/shortages'
     | '/status'
@@ -193,6 +203,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/lookup'
     | '/requests'
+    | '/restrictions'
     | '/settings'
     | '/shortages'
     | '/status'
@@ -211,6 +222,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/lookup'
     | '/requests'
+    | '/restrictions'
     | '/settings'
     | '/shortages'
     | '/status'
@@ -230,6 +242,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   LookupRoute: typeof LookupRoute
   RequestsRoute: typeof RequestsRoute
+  RestrictionsRoute: typeof RestrictionsRoute
   SettingsRoute: typeof SettingsRoute
   ShortagesRoute: typeof ShortagesRoute
   StatusRoute: typeof StatusRoute
@@ -338,6 +351,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/restrictions': {
+      id: '/restrictions'
+      path: '/restrictions'
+      fullPath: '/restrictions'
+      preLoaderRoute: typeof RestrictionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/station/$code': {
       id: '/station/$code'
       path: '/station/$code'
@@ -366,6 +386,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   LookupRoute: LookupRoute,
   RequestsRoute: RequestsRoute,
+  RestrictionsRoute: RestrictionsRoute,
   SettingsRoute: SettingsRoute,
   ShortagesRoute: ShortagesRoute,
   StatusRoute: StatusRoute,

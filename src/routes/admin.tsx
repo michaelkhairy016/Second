@@ -28,7 +28,7 @@ export const Route = createFileRoute("/admin")({
 function Page() {
   const { isSuperuser, isStaff } = useAuth();
   const nav = useNavigate();
-  const isAdmin = isSuperuser || isStaff;
+  const isAdmin = isSuperuser;
   useEffect(() => { if (!isAdmin) nav({ to: "/" }); }, [isAdmin, nav]);
 
   const [reqs, setReqs] = useState<(AccessRequestWithProfile & { profile: { display_name: string } | null })[]>([]);

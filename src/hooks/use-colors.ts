@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
-interface StandardColor {
+export interface StandardColor {
   id: string;
   code: string;
   name: string;

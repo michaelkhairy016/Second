@@ -137,9 +137,12 @@ function DailyStatusTab() {
           { code: "wbs", label: "WBS" },
           { code: "paint", label: "Paint" },
           { code: "shortage", label: "Shortage" },
+          { code: "tcf", label: "TCF" },
+          { code: "waiting_repair", label: "Waiting Repair" },
           { code: "repair", label: "Repair" },
           { code: "cs", label: "C.S" },
           { code: "pdi", label: "PDI" },
+          { code: "tcf_offline", label: "TCF Offline" },
         ];
         return stations.map(st => {
           const stationEvts = evts.filter(e => e.station === st.code);
@@ -171,9 +174,12 @@ function DailyStatusTab() {
         { code: "wbs", label: "WBS" },
         { code: "paint", label: "Paint" },
         { code: "pbs", label: "PBS" },
+        { code: "tcf", label: "TCF" },
+        { code: "waiting_repair", label: "Waiting Repair" },
         { code: "shortage", label: "Shortage" },
         { code: "repair", label: "Repair" },
         { code: "cs", label: "C.S" },
+        { code: "tcf_offline", label: "TCF Offline" },
       ];
       const wipData = wipStations.map(st => {
         const row = empty();

@@ -14,6 +14,16 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { StationCode } from "@/lib/db-types";
 
+// Direction constraints per station
+const DIRECTION_CONSTRAINTS: Partial<Record<StationCode, "in" | "out" | "both">> = {
+  tcf: "out",
+  waiting_repair: "both",
+  tcf_offline: "in",
+  repair: "both",
+  cs: "both",
+  pdi: "both",
+};
+
 export const Route = createFileRoute("/bulk/$code")({
   head: ({ params }) => ({ meta: [{ title: `Bulk ${stationByCode(params.code)?.label} — AFA Shopfloor` }] }),
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
@@ -32,6 +42,10 @@ function Page() {
   const [report, setReport] = useState<{ matched: number; missing: string[] } | null>(null);
 
   if (!station) return null;
+
+  // Determine allowed direction for this station
+  const allowedDir = DIRECTION_CONSTRAINTS[station.code as StationCode] ?? "both";
+  const effectiveKind = allowedDir !== "both" ? allowedDir : kind;
 
   const run = async () => {
     setBusy(true); setReport(null);
@@ -52,12 +66,28 @@ function Page() {
       if (matched.length === 0) throw new Error("No vehicles found");
 
       const user = (await supabase.auth.getUser()).data.user;
-      const events = matched.map(m => ({ vehicle_id: m.id, station: station.code as StationCode, kind, recorded_by: user?.id, source: "bulk" }));
+      const events = matched.map(m => ({ vehicle_id: m.id, station: station.code as StationCode, kind: effectiveKind as "in" | "out", recorded_by: user?.id, source: "bulk" }));
       const { error: ee } = await supabase.from("station_events").insert(events);
       if (ee) throw ee;
       await supabase.from("vehicles").update({ current_station: station.code }).in("id", matched.map(m => m.id));
+
+      // For OUT events, advance station per flow rules (same as station.$code.tsx)
+      if (effectiveKind === "out") {
+        const nextStationMap: Partial<Record<StationCode, StationCode>> = {
+          wbs: "paint",
+          pbs: "tcf",
+          tcf: "waiting_repair",
+          waiting_repair: "repair",
+          repair: "cs",
+        };
+        const nextStation = nextStationMap[station.code as StationCode];
+        if (nextStation) {
+          await supabase.from("vehicles").update({ current_station: nextStation }).in("id", matched.map(m => m.id));
+        }
+      }
+
       // Mark vehicles as completed when they exit PDI
-      if (kind === "out" && station.code === "pdi") {
+      if (effectiveKind === "out" && station.code === "pdi") {
         await supabase.from("vehicles").update({ completed_at: new Date().toISOString() }).in("id", matched.map(m => m.id));
       }
       setReport({ matched: matched.length, missing });
@@ -79,13 +109,19 @@ function Page() {
         </div>
         <div className="flex gap-2 items-center">
           <Label className="text-sm">Direction</Label>
-          <Select value={kind} onValueChange={(v) => setKind(v as "in" | "out")}>
-            <SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="in">IN to {station.label}</SelectItem>
-              <SelectItem value="out">OUT of {station.label}</SelectItem>
-            </SelectContent>
-          </Select>
+          {allowedDir === "both" ? (
+            <Select value={kind} onValueChange={(v) => setKind(v as "in" | "out")}>
+              <SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="in">IN to {station.label}</SelectItem>
+                <SelectItem value="out">OUT of {station.label}</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : (
+            <span className="text-sm font-medium px-2 py-1 rounded border bg-muted">
+              {allowedDir === "in" ? "IN" : "OUT"} — {station.label}
+            </span>
+          )}
           <Button className="ml-auto" disabled={busy} onClick={run}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply to all"}</Button>
         </div>
         {report && (
