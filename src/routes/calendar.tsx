@@ -11,6 +11,7 @@ import { ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
 interface CalendarDay {
   date: string;
   is_working_day: boolean;
+  working_hours: number;
   notes: string | null;
 }
 
@@ -52,17 +53,29 @@ function CalendarPage() {
 
   const toggleDay = async (dateStr: string) => {
     const dayData = calendarData[dateStr];
-    const newValue = !dayData?.is_working_day;
+    const currentHours = dayData?.working_hours ?? 0;
+    const isWorking = dayData?.is_working_day ?? false;
+
+    // Cycle: off → 8h → 10h → off
+    let newHours: number;
+    let newWorking: boolean;
+    if (!isWorking || currentHours === 0) {
+      newHours = 8; newWorking = true;
+    } else if (currentHours <= 8) {
+      newHours = 10; newWorking = true;
+    } else {
+      newHours = 0; newWorking = false;
+    }
 
     const { error } = await supabase
       .from("factory_calendar")
-      .update({ is_working_day: newValue })
+      .update({ is_working_day: newWorking, working_hours: newHours })
       .eq("date", dateStr);
 
     if (!error) {
       setCalendarData((prev) => ({
         ...prev,
-        [dateStr]: { ...prev[dateStr], is_working_day: newValue },
+        [dateStr]: { ...prev[dateStr], is_working_day: newWorking, working_hours: newHours },
       }));
     }
   };
@@ -91,12 +104,12 @@ function CalendarPage() {
       const date = new Date(year, month, day);
       const dateStr = date.toISOString().split("T")[0];
       const dayOfWeek = date.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
-      const isWorking = dayOfWeek >= 1 && dayOfWeek <= 4; // Mon-Thu
+      const isWorking = dayOfWeek >= 0 && dayOfWeek <= 4; // Sun-Thu
 
       updates.push(
         supabase
           .from("factory_calendar")
-          .update({ is_working_day: isWorking })
+          .update({ is_working_day: isWorking, working_hours: isWorking ? 8 : 0 })
           .eq("date", dateStr)
       );
     }
@@ -119,7 +132,9 @@ function CalendarPage() {
     const dateStr = date.toISOString().split("T")[0];
     const dayData = calendarData[dateStr];
     const isWorking = dayData?.is_working_day ?? true;
+    const hours = dayData?.working_hours ?? 8;
     const notes = dayData?.notes;
+    const isOvertime = isWorking && hours >= 10;
 
     return (
       <div
@@ -127,11 +142,14 @@ function CalendarPage() {
         onClick={() => toggleDay(dateStr)}
         className={`
           aspect-square p-1 rounded cursor-pointer transition-all hover:opacity-80
-          ${isWorking ? "bg-green-500/20 border border-green-500/30" : "bg-gray-700/40 border border-gray-600/30"}
+          ${isOvertime ? "bg-amber-500/20 border border-amber-500/30" : isWorking ? "bg-green-500/20 border border-green-500/30" : "bg-gray-700/40 border border-gray-600/30"}
         `}
       >
         <div className="flex flex-col h-full">
-          <span className="text-xs font-medium">{day}</span>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">{day}</span>
+            {isWorking && <span className="text-[9px] font-mono text-muted-foreground">{hours}h</span>}
+          </div>
           {editingNotes === dateStr ? (
             <div
               className="mt-1 flex-1"
@@ -217,11 +235,11 @@ function CalendarPage() {
               className="w-full"
             >
               <RotateCcw className="h-3 w-3 mr-2" />
-              Reset to default (Mon-Thu)
+              Reset to default (Sun–Thu, 8h)
             </Button>
 
             <div className="text-center text-xs text-muted-foreground">
-              Click a day to toggle working/off • Click + to add notes
+              Click a day to cycle: off → 8h → 10h → off • Click + to add notes
             </div>
 
             {loading ? (
@@ -240,14 +258,18 @@ function CalendarPage() {
               </div>
             )}
 
-            <div className="flex items-center justify-center gap-6 text-xs text-muted-foreground">
+            <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
               <div className="flex items-center gap-1.5">
                 <div className="w-3 h-3 rounded bg-green-500/20 border border-green-500/30" />
-                <span>Working day</span>
+                <span>8h</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-3 h-3 rounded bg-amber-500/20 border border-amber-500/30" />
+                <span>10h OT</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <div className="w-3 h-3 rounded bg-gray-700/40 border border-gray-600/30" />
-                <span>Off day</span>
+                <span>Off</span>
               </div>
             </div>
           </div>

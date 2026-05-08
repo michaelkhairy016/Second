@@ -32,7 +32,7 @@ function Home() {
   useEffect(() => {
     (async () => {
       const [{ data: vs }, { count: shortageCount }, { count: issueCount }] = await Promise.all([
-        supabase.from("vehicles").select("current_station"),
+        supabase.from("vehicles").select("current_station").is("completed_at", null),
         supabase.from("shortages").select("id", { count: "exact", head: true }).eq("status", "open"),
         supabase.from("issues").select("id", { count: "exact", head: true }).in("status", ["open", "in_progress"]),
       ]);

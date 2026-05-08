@@ -22,7 +22,7 @@ function Page() {
 
   const load = useCallback(async () => {
     const [{ data: vs }, { data: ev }, { data: ai }, { data: ri }, { data: jos }] = await Promise.all([
-      supabase.from("vehicles").select("*"),
+      supabase.from("vehicles").select("id, vin, vin_suffix, current_station, lot_id, job_order_id, planned_color_id, actual_color_id, is_lot_tail, tail_note").is("completed_at", null),
       supabase.from("station_events").select("vehicle_id, station, recorded_at").eq("kind", "in").order("recorded_at", { ascending: false }),
       supabase.from("issues").select("*").in("status", ["open", "in_progress"]),
       supabase.from("issues").select("*").in("status", ["resolved", "closed"]),

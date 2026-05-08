@@ -18,6 +18,7 @@ import { Route as LookupRouteImport } from './routes/lookup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IssuesRouteImport } from './routes/issues'
 import { Route as FlowRouteImport } from './routes/flow'
+import { Route as DelayedRouteImport } from './routes/delayed'
 import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AdminRouteImport } from './routes/admin'
@@ -70,6 +71,11 @@ const FlowRoute = FlowRouteImport.update({
   path: '/flow',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DelayedRoute = DelayedRouteImport.update({
+  id: '/delayed',
+  path: '/delayed',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CalendarRoute = CalendarRouteImport.update({
   id: '/calendar',
   path: '/calendar',
@@ -106,6 +112,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
   '/calendar': typeof CalendarRoute
+  '/delayed': typeof DelayedRoute
   '/flow': typeof FlowRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
@@ -123,6 +130,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
   '/calendar': typeof CalendarRoute
+  '/delayed': typeof DelayedRoute
   '/flow': typeof FlowRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
@@ -141,6 +149,7 @@ export interface FileRoutesById {
   '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
   '/calendar': typeof CalendarRoute
+  '/delayed': typeof DelayedRoute
   '/flow': typeof FlowRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
@@ -160,6 +169,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/analytics'
     | '/calendar'
+    | '/delayed'
     | '/flow'
     | '/issues'
     | '/login'
@@ -177,6 +187,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/analytics'
     | '/calendar'
+    | '/delayed'
     | '/flow'
     | '/issues'
     | '/login'
@@ -194,6 +205,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/analytics'
     | '/calendar'
+    | '/delayed'
     | '/flow'
     | '/issues'
     | '/login'
@@ -212,6 +224,7 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
   AnalyticsRoute: typeof AnalyticsRoute
   CalendarRoute: typeof CalendarRoute
+  DelayedRoute: typeof DelayedRoute
   FlowRoute: typeof FlowRoute
   IssuesRoute: typeof IssuesRoute
   LoginRoute: typeof LoginRoute
@@ -290,6 +303,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FlowRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/delayed': {
+      id: '/delayed'
+      path: '/delayed'
+      fullPath: '/delayed'
+      preLoaderRoute: typeof DelayedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/calendar': {
       id: '/calendar'
       path: '/calendar'
@@ -340,6 +360,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRoute,
   AnalyticsRoute: AnalyticsRoute,
   CalendarRoute: CalendarRoute,
+  DelayedRoute: DelayedRoute,
   FlowRoute: FlowRoute,
   IssuesRoute: IssuesRoute,
   LoginRoute: LoginRoute,

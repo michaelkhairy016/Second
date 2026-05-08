@@ -1,4 +1,4 @@
-import { Boxes, Frame, PaintBucket, ParkingSquare, AlertTriangle, Wrench, ClipboardCheck, Truck } from "lucide-react";
+import { Boxes, Frame, PaintBucket, ParkingSquare, AlertTriangle, Wrench, ClipboardCheck, Truck, Cog } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { StationCode } from "@/lib/db-types";
 
@@ -15,6 +15,7 @@ export interface StationDef {
 
 export const STATIONS: StationDef[] = [
   { code: "warehouse", label: "Warehouse", short: "WH",  description: "Lots & job orders", icon: Boxes, module: "data-entry" },
+  { code: "body_shop", label: "Body Shop", short: "BS",  description: "Body assembly", icon: Cog, module: "data-entry" },
   { code: "wbs",       label: "WBS",       short: "WBS", description: "White body in/out", icon: Frame, module: "data-entry" },
   { code: "paint",     label: "Paint",     short: "PT",  description: "Color application", icon: PaintBucket, module: "data-entry" },
   { code: "pbs",       label: "PBS",       short: "PBS", description: "Painted body buffer", icon: ParkingSquare, module: "data-entry" },

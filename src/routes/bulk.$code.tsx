@@ -39,13 +39,13 @@ function Page() {
       const tokens = text.split(/\s+|[,;]/).map(s => s.trim().toUpperCase()).filter(Boolean);
       if (tokens.length === 0) throw new Error("Paste at least one VIN or suffix");
 
-      // Look them up: support full VIN or suffix
+      // Look them up: support full VIN or suffix — exclude completed vehicles
       const matched: { id: string; vin: string }[] = [];
       const missing: string[] = [];
       for (const t of tokens) {
         const q = t.length === 17
-          ? supabase.from("vehicles").select("id, vin").eq("vin", t).maybeSingle()
-          : supabase.from("vehicles").select("id, vin").ilike("vin_suffix", `%${t.slice(-5)}`).limit(1).maybeSingle();
+          ? supabase.from("vehicles").select("id, vin").eq("vin", t).is("completed_at", null).maybeSingle()
+          : supabase.from("vehicles").select("id, vin").ilike("vin_suffix", `%${t.slice(-5)}`).is("completed_at", null).limit(1).maybeSingle();
         const { data } = await q;
         if (data) matched.push(data); else missing.push(t);
       }
@@ -56,6 +56,10 @@ function Page() {
       const { error: ee } = await supabase.from("station_events").insert(events);
       if (ee) throw ee;
       await supabase.from("vehicles").update({ current_station: station.code }).in("id", matched.map(m => m.id));
+      // Mark vehicles as completed when they exit PDI
+      if (kind === "out" && station.code === "pdi") {
+        await supabase.from("vehicles").update({ completed_at: new Date().toISOString() }).in("id", matched.map(m => m.id));
+      }
       setReport({ matched: matched.length, missing });
       toast.success(`Updated ${matched.length} vehicles`);
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }

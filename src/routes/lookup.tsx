@@ -92,7 +92,7 @@ function VehicleLookup() {
                 <li key={v.id}>
                   <button onClick={() => selectVehicle(v)} className="w-full text-left px-3 py-2 hover:bg-muted flex items-center justify-between text-sm">
                     <span className="font-mono">{v.vin}</span>
-                    <span className="text-xs text-muted-foreground">{stationByCode(v.current_station ?? "")?.label ?? v.current_station ?? "—"}</span>
+                    <span className="text-xs text-muted-foreground">{(v as any).is_archived ? "Archived" : (v as any).completed_at ? "Completed" : (stationByCode(v.current_station ?? "")?.label ?? v.current_station ?? "—")}</span>
                   </button>
                 </li>
               ))}
@@ -112,7 +112,7 @@ function VehicleLookup() {
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <div className="text-xs text-muted-foreground">Current Station</div>
-                <div className="font-medium">{stationByCode(selected.current_station ?? "")?.label ?? "—"}</div>
+                <div className="font-medium">{(selected as any).is_archived ? "Archived" : (selected as any).completed_at ? "Completed" : (stationByCode(selected.current_station ?? "")?.label ?? "—")}</div>
               </div>
               <div>
                 <div className="text-xs text-muted-foreground">Lot tail</div>

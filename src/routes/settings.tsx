@@ -14,9 +14,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { EmptyState } from "@/components/EmptyState";
-import { Palette, Car, Plus, Pencil, Trash2, Loader2, ChevronDown, ChevronRight } from "lucide-react";
+import { Palette, Car, Plus, Pencil, Trash2, Loader2, ChevronDown, ChevronRight, FileText, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
-import type { StandardColor, Model, ModelTrim, ModelWithTrims } from "@/lib/db-types";
+import type { StandardColor, Model, ModelTrim, ModelWithTrims, ProductionPlan } from "@/lib/db-types";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({ meta: [{ title: "Settings — AFA Shopfloor" }] }),
@@ -35,9 +35,13 @@ function Page() {
         <TabsList>
           <TabsTrigger value="colors"><Palette className="h-4 w-4 mr-1.5" />Colors</TabsTrigger>
           <TabsTrigger value="models"><Car className="h-4 w-4 mr-1.5" />Models</TabsTrigger>
+          <TabsTrigger value="reports"><FileText className="h-4 w-4 mr-1.5" />Reports</TabsTrigger>
+          <TabsTrigger value="plan"><CalendarDays className="h-4 w-4 mr-1.5" />Prod. Plan</TabsTrigger>
         </TabsList>
         <TabsContent value="colors" className="mt-4"><ColorsTab /></TabsContent>
         <TabsContent value="models" className="mt-4"><ModelsTab /></TabsContent>
+        <TabsContent value="reports" className="mt-4"><ReportsTab /></TabsContent>
+        <TabsContent value="plan" className="mt-4"><ProductionPlanTab /></TabsContent>
       </Tabs>
     </div>
   );
@@ -295,5 +299,270 @@ function ModelsTab() {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/* ─── Reports Tab ─── */
+
+function ReportsTab() {
+  const [delayDays, setDelayDays] = useState(2);
+  const [reportEnabled, setReportEnabled] = useState(false);
+  const [reportHours, setReportHours] = useState<number[]>([8, 12, 16]);
+  const [reportEmails, setReportEmails] = useState<string[]>([]);
+  const [newEmail, setNewEmail] = useState("");
+  const [resendKey, setResendKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    const load = async () => {
+      const { data } = await supabase.from("app_settings").select("*");
+      const settings = data ?? [];
+      const dt = settings.find(s => s.key === "delay_threshold");
+      const rs = settings.find(s => s.key === "report_schedule");
+      const re = settings.find(s => s.key === "report_emails");
+      if (dt?.value && typeof dt.value === "object") setDelayDays((dt.value as any).days ?? 2);
+      if (rs?.value && typeof rs.value === "object") {
+        const v = rs.value as any;
+        setReportEnabled(v.enabled ?? false);
+        setReportHours(v.hours ?? [8, 12, 16]);
+      }
+      if (re?.value && typeof re.value === "object") {
+        const v = re.value as any;
+        setReportEmails(v.emails ?? []);
+        setResendKey(v.resend_api_key ?? "");
+      }
+      setLoaded(true);
+    };
+    load();
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await supabase.from("app_settings").upsert({ key: "delay_threshold", value: { days: delayDays } });
+      await supabase.from("app_settings").upsert({ key: "report_schedule", value: { enabled: reportEnabled, hours: reportHours } });
+      await supabase.from("app_settings").upsert({ key: "report_emails", value: { emails: reportEmails, resend_api_key: resendKey } });
+      toast.success("Settings saved");
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+
+  const HOUR_OPTIONS = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+
+  const toggleHour = (h: number) => {
+    setReportHours(prev => prev.includes(h) ? prev.filter(x => x !== h) : [...prev, h].sort());
+  };
+
+  const addEmail = () => {
+    const trimmed = newEmail.trim().toLowerCase();
+    if (trimmed && trimmed.includes("@") && !reportEmails.includes(trimmed)) {
+      setReportEmails(prev => [...prev, trimmed]);
+      setNewEmail("");
+    }
+  };
+
+  const removeEmail = (email: string) => {
+    setReportEmails(prev => prev.filter(e => e !== email));
+  };
+
+  if (!loaded) return <p className="text-sm text-muted-foreground">Loading settings...</p>;
+
+  return (
+    <div className="space-y-4">
+      {/* Delay Threshold */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Delayed Vehicles Threshold</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">Vehicles staying at a station longer than this number of working days will appear in the Delayed report.</p>
+          <div className="flex items-center gap-2">
+            <Input type="number" min={0} max={30} value={delayDays} onChange={e => setDelayDays(Math.max(0, parseInt(e.target.value) || 0))} className="w-20" />
+            <span className="text-sm text-muted-foreground">working days</span>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Report Schedule */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Scheduled Reports</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Enable automated reports</p>
+              <p className="text-xs text-muted-foreground">Generate and email PDF reports at scheduled times using pg_cron</p>
+            </div>
+            <Switch checked={reportEnabled} onCheckedChange={setReportEnabled} />
+          </div>
+          {reportEnabled && (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label className="text-sm">Report Hours</Label>
+                <div className="flex flex-wrap gap-2">
+                  {HOUR_OPTIONS.map(h => (
+                    <button
+                      key={h}
+                      onClick={() => toggleHour(h)}
+                      className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${reportHours.includes(h) ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border hover:bg-accent"}`}
+                    >
+                      {h.toString().padStart(2, "0")}:00
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Email Configuration */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Email Configuration</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label className="text-sm">Resend API Key</Label>
+            <p className="text-xs text-muted-foreground">Get a free API key from resend.com (100 emails/day free)</p>
+            <Input type="password" value={resendKey} onChange={e => setResendKey(e.target.value)} placeholder="re_xxxxxxxxxxxx" />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm">Report Recipients</Label>
+            <div className="flex gap-2">
+              <Input value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="email@example.com" onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addEmail(); } }} />
+              <Button variant="outline" size="sm" onClick={addEmail}><Plus className="h-4 w-4" /></Button>
+            </div>
+            {reportEmails.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {reportEmails.map(email => (
+                  <span key={email} className="inline-flex items-center gap-1 text-xs bg-muted rounded-full px-2.5 py-1">
+                    {email}
+                    <button onClick={() => removeEmail(email)} className="text-muted-foreground hover:text-destructive">&times;</button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Settings"}</Button>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Production Plan Tab ─── */
+
+function ProductionPlanTab() {
+  const [models, setModels] = useState<Model[]>([]);
+  const [plans, setPlans] = useState<ProductionPlan[]>([]);
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, "0")}`;
+  });
+  const [busy, setBusy] = useState(false);
+  const [editPlans, setEditPlans] = useState<Record<string, { monthly_plan: number; daily_target: number; jph_target: number }>>({});
+
+  const load = useCallback(async () => {
+    const [mRes, pRes] = await Promise.all([
+      supabase.from("models").select("*").eq("active", true).order("name"),
+      supabase.from("production_plans").select("*").eq("month", selectedMonth + "-01"),
+    ]);
+    setModels(mRes.data ?? []);
+    setPlans(pRes.data ?? []);
+  }, [selectedMonth]);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const initial: Record<string, { monthly_plan: number; daily_target: number; jph_target: number }> = {};
+    models.forEach(m => {
+      const existing = plans.find(p => p.model_id === m.id);
+      initial[m.id] = existing
+        ? { monthly_plan: existing.monthly_plan, daily_target: existing.daily_target, jph_target: existing.jph_target }
+        : { monthly_plan: 0, daily_target: 0, jph_target: 0 };
+    });
+    setEditPlans(initial);
+  }, [models, plans]);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      for (const [modelId, vals] of Object.entries(editPlans)) {
+        await supabase.from("production_plans").upsert({
+          month: selectedMonth + "-01",
+          model_id: modelId,
+          monthly_plan: vals.monthly_plan,
+          daily_target: vals.daily_target,
+          jph_target: vals.jph_target,
+        }, { onConflict: "month,model_id" });
+      }
+      toast.success("Production plan saved");
+      load();
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+
+  const updateField = (modelId: string, field: "monthly_plan" | "daily_target" | "jph_target", value: number) => {
+    setEditPlans(prev => ({
+      ...prev,
+      [modelId]: { ...prev[modelId], [field]: value },
+    }));
+  };
+
+  const totalPlan = Object.values(editPlans).reduce((s, p) => s + p.monthly_plan, 0);
+  const totalDaily = Object.values(editPlans).reduce((s, p) => s + p.daily_target, 0);
+  const totalJPH = Object.values(editPlans).reduce((s, p) => s + p.jph_target, 0);
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center justify-between">
+            <span>Monthly Production Plan</span>
+            <Input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="w-44" />
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {models.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No active models. Add models in the Models tab first.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Model</TableHead>
+                  <TableHead className="text-right">Monthly Plan</TableHead>
+                  <TableHead className="text-right">Daily Target</TableHead>
+                  <TableHead className="text-right">JPH Target</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {models.map(m => (
+                  <TableRow key={m.id}>
+                    <TableCell className="font-medium">{m.name}</TableCell>
+                    <TableCell className="text-right">
+                      <Input type="number" min={0} value={editPlans[m.id]?.monthly_plan ?? 0} onChange={e => updateField(m.id, "monthly_plan", +e.target.value)} className="w-24 ml-auto text-right" />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Input type="number" min={0} value={editPlans[m.id]?.daily_target ?? 0} onChange={e => updateField(m.id, "daily_target", +e.target.value)} className="w-24 ml-auto text-right" />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Input type="number" min={0} step={0.1} value={editPlans[m.id]?.jph_target ?? 0} onChange={e => updateField(m.id, "jph_target", +e.target.value)} className="w-24 ml-auto text-right" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+                <TableRow className="font-semibold border-t-2">
+                  <TableCell>Total</TableCell>
+                  <TableCell className="text-right">{totalPlan}</TableCell>
+                  <TableCell className="text-right">{totalDaily}</TableCell>
+                  <TableCell className="text-right">{totalJPH.toFixed(1)}</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Plan"}</Button>
+      </div>
+    </div>
   );
 }

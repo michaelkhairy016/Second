@@ -79,7 +79,7 @@ interface ShopSection {
 }
 
 function DailyStatusTab() {
-  const [todayStr] = useState(() => new Date().toISOString().slice(0, 10));
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [monthStart] = useState(() => {
     const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d.toISOString();
   });
@@ -89,6 +89,7 @@ function DailyStatusTab() {
   const [monthlyShops, setMonthlyShops] = useState<ShopSection[]>([]);
   const [wipRows, setWipRows] = useState<{ label: string; data: ModelRow; total: number }[]>([]);
   const [totalWip, setTotalWip] = useState(0);
+  const [mtdWorkingHours, setMtdWorkingHours] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -96,20 +97,22 @@ function DailyStatusTab() {
     const load = async () => {
       setLoading(true);
 
-      // Get all vehicles with lot -> model
-      const [{ data: vs }, { data: events }] = await Promise.all([
-        supabase.from("vehicles").select("id, current_station, lot:lots(model)"),
-        supabase.from("station_events").select("id, station, kind, recorded_at, vehicle_id, vehicle:vehicles(id, lot:lots(model))"),
+      // Single RPC call + MTD working hours
+      const [{ data: rpcData }, { data: mtdData }] = await Promise.all([
+        supabase.rpc("get_daily_status_data"),
+        supabase.from("factory_calendar").select("working_hours").gte("date", new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)).lte("date", new Date().toISOString().slice(0, 10)).eq("is_working_day", true),
       ]);
-
       if (cancel) return;
-      const vehicles = vs ?? [];
-      const allEvents = events ?? [];
+
+      setMtdWorkingHours((mtdData ?? []).reduce((sum: number, r: any) => sum + (r.working_hours ?? 0), 0));
+
+      const vehicles: any[] = rpcData?.vehicles ?? [];
+      const allEvents: any[] = rpcData?.events ?? [];
 
       // Determine unique models
       const modelSet = new Set<string>();
-      vehicles.forEach((v: any) => { if (v.lot?.model) modelSet.add(v.lot.model); });
-      allEvents.forEach((e: any) => { if (e.vehicle?.lot?.model) modelSet.add(e.vehicle.lot.model); });
+      vehicles.forEach((v: any) => { if (v.model) modelSet.add(v.model); });
+      allEvents.forEach((e: any) => { if (e.model) modelSet.add(e.model); });
       const modelList = Array.from(modelSet).sort();
       setModels(modelList);
 
@@ -118,15 +121,20 @@ function DailyStatusTab() {
 
       // Build vehicle model map
       const vModel = new Map<string, string>();
-      vehicles.forEach((v: any) => { if (v.lot?.model) vModel.set(v.id, v.lot.model); });
+      vehicles.forEach((v: any) => { if (v.model) vModel.set(v.id, v.model); });
 
       // --- Daily events ---
-      const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-      const dailyEvents = allEvents.filter(e => new Date(e.recorded_at) >= dayStart);
+      const dayStart = new Date(selectedDate + "T00:00:00");
+      const dayEnd = new Date(selectedDate + "T23:59:59");
+      const dailyEvents = allEvents.filter(e => {
+        const t = new Date(e.recorded_at);
+        return t >= dayStart && t <= dayEnd;
+      });
 
       const buildSections = (evts: any[]): ShopSection[] => {
         const stations = [
-          { code: "wbs", label: "Body" },
+          { code: "body_shop", label: "Body Shop" },
+          { code: "wbs", label: "WBS" },
           { code: "paint", label: "Paint" },
           { code: "shortage", label: "Shortage" },
           { code: "repair", label: "Repair" },
@@ -138,7 +146,7 @@ function DailyStatusTab() {
           const inRow = empty();
           const outRow = empty();
           stationEvts.forEach(e => {
-            const model = (e as any).vehicle?.lot?.model;
+            const model = e.model;
             if (!model) return;
             if (e.kind === "in") inRow[model] = (inRow[model] ?? 0) + 1;
             else outRow[model] = (outRow[model] ?? 0) + 1;
@@ -159,6 +167,7 @@ function DailyStatusTab() {
       // --- WIP per station per model ---
       const wipStations = [
         { code: "warehouse", label: "Line Feeding" },
+        { code: "body_shop", label: "Body Shop" },
         { code: "wbs", label: "WBS" },
         { code: "paint", label: "Paint" },
         { code: "pbs", label: "PBS" },
@@ -169,7 +178,7 @@ function DailyStatusTab() {
       const wipData = wipStations.map(st => {
         const row = empty();
         vehicles.filter((v: any) => v.current_station === st.code).forEach((v: any) => {
-          const model = v.lot?.model;
+          const model = v.model;
           if (model) row[model] = (row[model] ?? 0) + 1;
         });
         return { label: st.label, data: row, total: sum(row) };
@@ -188,22 +197,28 @@ function DailyStatusTab() {
       .on("postgres_changes", { event: "*", schema: "public", table: "station_events" }, load)
       .subscribe();
     return () => { cancel = true; supabase.removeChannel(ch); };
-  }, [monthStart]);
+  }, [monthStart, selectedDate]);
 
   if (loading) return <p className="text-sm text-muted-foreground">Loading daily status...</p>;
+
+  const isToday = selectedDate === new Date().toISOString().slice(0, 10);
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">Daily Production Status — All Models</h2>
-          <p className="text-xs text-muted-foreground">{todayStr} · Updated in real-time</p>
+          <p className="text-xs text-muted-foreground">{selectedDate}{isToday ? " · Updated in real-time" : " · Historical view"}</p>
         </div>
-        <StatCard label="Total WIP" value={totalWip} />
+        <div className="flex items-center gap-3">
+          <Input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} max={new Date().toISOString().slice(0, 10)} className="w-40" />
+          <StatCard label="MTD Hours" value={`${mtdWorkingHours}h`} />
+          <StatCard label="Total WIP" value={totalWip} />
+        </div>
       </div>
 
       {/* Daily Shops Productivity */}
-      <ShopTable title="Daily Shops Productivity" models={models} sections={dailyShops} />
+      <ShopTable title={`Daily Shops Productivity — ${selectedDate}`} models={models} sections={dailyShops} />
 
       {/* Monthly Shops Productivity */}
       <ShopTable title="Monthly Shops Productivity" models={models} sections={monthlyShops} />
@@ -280,7 +295,7 @@ function FlowTab() {
 
   const load = useCallback(async () => {
     const [{ data: vs }, { data: ev }, { data: ai }, { data: ri }, { data: jos }] = await Promise.all([
-      supabase.from("vehicles").select("*"),
+      supabase.from("vehicles").select("id, vin, vin_suffix, current_station, lot_id, job_order_id, planned_color_id, actual_color_id, is_lot_tail, tail_note").is("completed_at", null),
       supabase.from("station_events").select("vehicle_id, station, recorded_at").eq("kind", "in").order("recorded_at", { ascending: false }),
       supabase.from("issues").select("*").in("status", ["open", "in_progress"]),
       supabase.from("issues").select("*").in("status", ["resolved", "closed"]),
@@ -384,7 +399,7 @@ function WIPTab() {
   useEffect(() => {
     const load = async () => {
       const [vsRes, issuesRes, shortagesRes, evRes] = await Promise.all([
-        supabase.from("vehicles").select("id, vin, current_station, planned_color_id, actual_color_id"),
+        supabase.from("vehicles").select("id, vin, current_station, planned_color_id, actual_color_id").is("completed_at", null),
         supabase.from("issues").select("id, vehicle_id, title, severity, status").in("status", ["open", "in_progress"]),
         supabase.from("shortages").select("id", { count: "exact", head: true }).eq("status", "open"),
         supabase.from("station_events").select("vehicle_id, station, recorded_at").eq("kind", "in").order("recorded_at", { ascending: false }),
@@ -548,6 +563,15 @@ function DelayedTab() {
   const [threshold, setThreshold] = useState(2);
   const [vehicles, setVehicles] = useState<DelayedVehicle[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Load global threshold from app_settings
+  useEffect(() => {
+    supabase.from("app_settings").select("value").eq("key", "delay_threshold").single().then(({ data }) => {
+      if (data?.value && typeof data.value === "object") {
+        setThreshold((data.value as any).days ?? 2);
+      }
+    });
+  }, []);
 
   const loadDelayed = useCallback(async () => {
     setLoading(true);
@@ -732,7 +756,7 @@ function LookupTab() {
               >
                 <div className="flex items-center gap-3">
                   <span className="font-mono">{v.vin}</span>
-                  <Badge variant="secondary">{v.current_station ?? "—"}</Badge>
+                  <Badge variant={(v as any).is_archived ? "muted" : (v as any).completed_at ? "success" : "secondary"}>{(v as any).is_archived ? "Archived" : (v as any).completed_at ? "Completed" : (v.current_station ?? "—")}</Badge>
                   {v.planned_color_id && <span className="text-xs text-muted-foreground">Plan: {getCode(v.planned_color_id)}</span>}
                   {v.actual_color_id && <span className="text-xs text-muted-foreground">Actual: {getCode(v.actual_color_id)}</span>}
                 </div>

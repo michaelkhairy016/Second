@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ function Page() {
   const [jobs, setJobs] = useState<JobOrder[]>([]);
   const [printJob, setPrintJob] = useState<JobOrder | null>(null);
   const [printLot, setPrintLot] = useState<Lot | null>(null);
+  const [lotVehicleCounts, setLotVehicleCounts] = useState<Record<string, number>>({});
 
   const handlePrint = async (job: JobOrder) => {
     const { data: lot } = await supabase.from("lots").select("*").eq("id", job.lot_id).maybeSingle();
@@ -41,11 +43,16 @@ function Page() {
     setTimeout(() => window.print(), 150);
   };
   const reload = async () => {
-    const [{ data: l }, { data: j }] = await Promise.all([
+    const [{ data: l }, { data: j }, { data: vc }] = await Promise.all([
       supabase.from("lots").select("*").order("created_at", { ascending: false }),
       supabase.from("job_orders").select("*").order("created_at", { ascending: false }),
+      supabase.from("vehicles").select("lot_id").is("completed_at", null),
     ]);
     setLots(l ?? []); setJobs(j ?? []);
+    // Count vehicles per lot (in warehouse or in production, not completed)
+    const counts: Record<string, number> = {};
+    (vc ?? []).forEach((v: any) => { if (v.lot_id) counts[v.lot_id] = (counts[v.lot_id] ?? 0) + 1; });
+    setLotVehicleCounts(counts);
   };
 
   const handleExportLots = () => {
@@ -79,7 +86,7 @@ function Page() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="text-base">Lots</CardTitle>
+            <CardTitle className="text-base">Lot Inventory</CardTitle>
             {lots.length > 0 && (
               <Button variant="outline" size="sm" onClick={handleExportLots}>
                 <FileSpreadsheet className="h-4 w-4 mr-1" /> Export
@@ -89,9 +96,55 @@ function Page() {
         </CardHeader>
         <CardContent>
           {lots.length === 0 ? <EmptyState icon={Boxes} title="No lots" description="Create your first lot to start receiving vehicles." /> : (
-            <ul className="divide-y text-sm">
-              {lots.map(l => <li key={l.id} className="py-2 flex justify-between"><span><b>{l.lot_code}</b>{l.chinese_number ? <span className="text-muted-foreground"> / {l.chinese_number}</span> : null} · {l.model}</span><span className="text-muted-foreground">{l.total_units} units · {l.status}</span></li>)}
-            </ul>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-left py-2 px-2 font-medium text-muted-foreground">Lot</th>
+                    <th className="text-left py-2 px-2 font-medium text-muted-foreground">Model</th>
+                    <th className="text-center py-2 px-2 font-medium text-muted-foreground">Total</th>
+                    <th className="text-center py-2 px-2 font-medium text-muted-foreground">In WIP</th>
+                    <th className="text-center py-2 px-2 font-medium text-muted-foreground">Available</th>
+                    <th className="text-center py-2 px-2 font-medium text-muted-foreground">Producible</th>
+                    <th className="text-center py-2 px-2 font-medium text-muted-foreground">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lots.map(l => {
+                    const inWip = lotVehicleCounts[l.id] ?? 0;
+                    const available = l.total_units - inWip;
+                    return (
+                      <tr key={l.id} className="border-b hover:bg-muted/30">
+                        <td className="py-2 px-2 font-medium">{l.lot_code}{l.chinese_number ? <span className="text-muted-foreground text-xs"> / {l.chinese_number}</span> : null}</td>
+                        <td className="py-2 px-2">{l.model}</td>
+                        <td className="py-2 px-2 text-center">{l.total_units}</td>
+                        <td className="py-2 px-2 text-center">{inWip}</td>
+                        <td className="py-2 px-2 text-center">{available}</td>
+                        <td className="py-2 px-2 text-center">
+                          <Input
+                            type="number"
+                            min={0}
+                            max={l.total_units}
+                            value={(l as any).producible_units ?? l.total_units}
+                            onChange={e => {
+                              const val = parseInt(e.target.value) || 0;
+                              setLots(prev => prev.map(lot => lot.id === l.id ? { ...lot, producible_units: val } as any : lot));
+                            }}
+                            onBlur={async () => {
+                              await supabase.from("lots").update({ producible_units: (l as any).producible_units ?? l.total_units }).eq("id", l.id);
+                            }}
+                            className="w-16 h-7 text-center text-xs mx-auto"
+                          />
+                        </td>
+                        <td className="py-2 px-2 text-center">
+                          <Badge variant={l.status === "active" ? "default" : "secondary"}>{l.status}</Badge>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -126,7 +179,7 @@ function NewLot({ onDone }: { onDone: () => void }) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setBusy(true);
     const user = (await supabase.auth.getUser()).data.user;
-    const { error } = await supabase.from("lots").insert({ lot_code: code.trim(), chinese_number: chineseNumber.trim() || null, model: model.trim(), total_units: units, status: "active", created_by: user?.id });
+    const { error } = await supabase.from("lots").insert({ lot_code: code.trim(), chinese_number: chineseNumber.trim() || null, model: model.trim(), total_units: units, producible_units: units, status: "active", created_by: user?.id });
     setBusy(false);
     if (error) toast.error(error.message); else { toast.success("Lot created"); setCode(""); setChineseNumber(""); setModel(""); setUnits(50); onDone(); }
   };
@@ -160,6 +213,14 @@ function NewJobOrder({ lots, onDone }: { lots: Lot[]; onDone: () => void }) {
       });
       const vinList = vins.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length === 17);
       if (vinList.length !== units) throw new Error(`VIN count (${vinList.length}) must equal units (${units})`);
+
+      // Check for suffix collisions with completed vehicles
+      const suffixes = vinList.map(v => v.slice(-5));
+      const { data: completed } = await supabase.from("vehicles").select("vin_suffix").not("completed_at", "is", null).in("vin_suffix", suffixes);
+      if (completed && completed.length > 0) {
+        const colliding = completed.map(c => c.vin_suffix).join(", ");
+        toast.warning(`VIN suffix collision with completed vehicles: ${colliding}. Proceeding anyway.`);
+      }
 
       // Map color codes to UUIDs for job_order.color_plan
       const planWithUuids: Record<string, number> = {};
