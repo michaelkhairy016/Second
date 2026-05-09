@@ -14,10 +14,9 @@ import { EmptyState } from "@/components/EmptyState";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeft, Boxes, ClipboardList, Loader2, Plus, Printer, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
-import { COLOR_CODES } from "@/lib/stations";
 import { exportToCSV } from "@/lib/export";
 import { JobOrderPrintView } from "@/components/JobOrderPrintView";
-import type { Lot, JobOrder, Engine } from "@/lib/db-types";
+import type { Lot, JobOrder, Engine, Model, ModelTrim } from "@/lib/db-types";
 import { useColors } from "@/hooks/use-colors";
 
 export const Route = createFileRoute("/warehouse")({
@@ -33,6 +32,9 @@ function Page() {
 
   const [lots, setLots] = useState<Lot[]>([]);
   const [jobs, setJobs] = useState<JobOrder[]>([]);
+  const [models, setModels] = useState<Model[]>([]);
+  const [trims, setTrims] = useState<ModelTrim[]>([]);
+  const [modelYears, setModelYears] = useState<string[]>(["2026", "2027"]);
   const [printJob, setPrintJob] = useState<JobOrder | null>(null);
   const [printLot, setPrintLot] = useState<Lot | null>(null);
   const [printEngines, setPrintEngines] = useState<Engine[]>([]);
@@ -47,12 +49,16 @@ function Page() {
     setTimeout(() => window.print(), 150);
   };
   const reload = async () => {
-    const [{ data: l }, { data: j }, { data: vc }] = await Promise.all([
+    const [{ data: l }, { data: j }, { data: vc }, { data: m }, { data: t }, { data: s }] = await Promise.all([
       supabase.from("lots").select("*").order("created_at", { ascending: false }),
       supabase.from("job_orders").select("*").order("created_at", { ascending: false }),
       supabase.from("vehicles").select("lot_id").is("completed_at", null),
+      supabase.from("models").select("*").eq("active", true).order("name"),
+      supabase.from("model_trims").select("*").eq("active", true).order("sort_order"),
+      supabase.from("app_settings").select("*").eq("key", "model_years").maybeSingle(),
     ]);
-    setLots(l ?? []); setJobs(j ?? []);
+    setLots(l ?? []); setJobs(j ?? []); setModels(m ?? []); setTrims(t ?? []);
+    if (s?.value && Array.isArray(s.value)) setModelYears(s.value as string[]);
     // Count vehicles per lot (in warehouse or in production, not completed)
     const counts: Record<string, number> = {};
     (vc ?? []).forEach((v: any) => { if (v.lot_id) counts[v.lot_id] = (counts[v.lot_id] ?? 0) + 1; });
@@ -83,9 +89,9 @@ function Page() {
       </div>
 
       <div className="grid md:grid-cols-3 gap-4">
-        <NewLot onDone={reload} />
-        <NewJobOrder lots={lots} onDone={reload} />
-        <NewPaintJobOrder onDone={reload} />
+        <NewLot models={models} trims={trims} onDone={reload} />
+        <NewJobOrder lots={lots} modelYears={modelYears} onDone={reload} />
+        <NewPaintJobOrder modelYears={modelYears} onDone={reload} />
       </div>
 
       <Card>
@@ -182,14 +188,22 @@ function Page() {
   );
 }
 
-function NewLot({ onDone }: { onDone: () => void }) {
-  const [code, setCode] = useState(""); const [chineseNumber, setChineseNumber] = useState(""); const [model, setModel] = useState(""); const [units, setUnits] = useState(50); const [busy, setBusy] = useState(false);
+function NewLot({ models, trims, onDone }: { models: Model[]; trims: ModelTrim[]; onDone: () => void }) {
+  const [code, setCode] = useState(""); const [chineseNumber, setChineseNumber] = useState("");
+  const [modelName, setModelName] = useState(""); const [trimName, setTrimName] = useState("");
+  const [units, setUnits] = useState(50); const [busy, setBusy] = useState(false);
+
+  const selectedModel = models.find(m => m.name === modelName);
+  const modelTrims = selectedModel ? trims.filter(t => t.model_id === selectedModel.id) : [];
+
+  const modelValue = trimName ? `${modelName} — ${trimName}` : modelName;
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setBusy(true);
     const user = (await supabase.auth.getUser()).data.user;
-    const { error } = await supabase.from("lots").insert({ lot_code: code.trim(), chinese_number: chineseNumber.trim() || null, model: model.trim(), total_units: units, producible_units: units, status: "active", created_by: user?.id });
+    const { error } = await supabase.from("lots").insert({ lot_code: code.trim(), chinese_number: chineseNumber.trim() || null, model: modelValue.trim(), total_units: units, producible_units: units, status: "active", created_by: user?.id });
     setBusy(false);
-    if (error) toast.error(error.message); else { toast.success("Lot created"); setCode(""); setChineseNumber(""); setModel(""); setUnits(50); onDone(); }
+    if (error) toast.error(error.message); else { toast.success("Lot created"); setCode(""); setChineseNumber(""); setModelName(""); setTrimName(""); setUnits(50); onDone(); }
   };
   return (
     <Card><CardHeader><CardTitle className="text-base">New lot</CardTitle></CardHeader>
@@ -197,18 +211,39 @@ function NewLot({ onDone }: { onDone: () => void }) {
         <form onSubmit={submit} className="space-y-3">
           <div className="space-y-1.5"><Label>LOT No (internal)</Label><Input value={code} onChange={e => setCode(e.target.value)} placeholder="LOT-2026-001" required /></div>
           <div className="space-y-1.5"><Label>Chinese number (optional)</Label><Input value={chineseNumber} onChange={e => setChineseNumber(e.target.value)} placeholder="e.g. CN-2026-001" /></div>
-          <div className="space-y-1.5"><Label>Model</Label><Input value={model} onChange={e => setModel(e.target.value)} placeholder="Sedan A" required /></div>
+          <div className="space-y-1.5"><Label>Model</Label>
+            {models.length > 0 ? (
+              <Select value={modelName} onValueChange={v => { setModelName(v); setTrimName(""); }}>
+                <SelectTrigger><SelectValue placeholder="Select model..." /></SelectTrigger>
+                <SelectContent>
+                  {models.map(m => <SelectItem key={m.id} value={m.name}>{m.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input value={modelName} onChange={e => setModelName(e.target.value)} placeholder="Sedan A" required />
+            )}
+          </div>
+          {modelTrims.length > 0 && (
+            <div className="space-y-1.5"><Label>Trim level</Label>
+              <Select value={trimName} onValueChange={setTrimName}>
+                <SelectTrigger><SelectValue placeholder="Select trim..." /></SelectTrigger>
+                <SelectContent>
+                  {modelTrims.map(t => <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-1.5"><Label>Total units</Label><Input type="number" min={1} value={units} onChange={e => setUnits(+e.target.value)} required /></div>
-          <Button disabled={busy} type="submit" className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Plus className="h-4 w-4 mr-1" /> Create lot</>}</Button>
+          <Button disabled={busy || !modelName} type="submit" className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create lot"}</Button>
         </form>
       </CardContent>
     </Card>
   );
 }
 
-function NewJobOrder({ lots, onDone }: { lots: Lot[]; onDone: () => void }) {
+function NewJobOrder({ lots, modelYears, onDone }: { lots: Lot[]; modelYears: string[]; onDone: () => void }) {
   const { activeList } = useColors();
-  const [lotId, setLotId] = useState(""); const [code, setCode] = useState(""); const [units, setUnits] = useState(25); const [modelYear, setModelYear] = useState("2026");
+  const [lotId, setLotId] = useState(""); const [code, setCode] = useState(""); const [units, setUnits] = useState(25); const [modelYear, setModelYear] = useState(modelYears[0] ?? "2026");
   const [vins, setVins] = useState(""); const [engines, setEngines] = useState(""); const [colorPlan, setColorPlan] = useState("11U:10\n55U:15"); const [busy, setBusy] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
@@ -292,8 +327,7 @@ function NewJobOrder({ lots, onDone }: { lots: Lot[]; onDone: () => void }) {
             <Select value={modelYear} onValueChange={setModelYear}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="2026">2026</SelectItem>
-                <SelectItem value="2027">2027</SelectItem>
+                {modelYears.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -301,21 +335,20 @@ function NewJobOrder({ lots, onDone }: { lots: Lot[]; onDone: () => void }) {
           <div className="space-y-1.5"><Label>VINs (one per line, 17 chars)</Label><Textarea value={vins} onChange={e => setVins(e.target.value)} className="font-mono text-xs" rows={4} /></div>
           <div className="space-y-1.5"><Label>Engine numbers (one per line, from Excel)</Label><Textarea value={engines} onChange={e => setEngines(e.target.value)} className="font-mono text-xs" rows={3} placeholder="Paste engine numbers, one per line" /></div>
           <Button disabled={busy} type="submit" className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create job order"}</Button>
-          <p className="text-xs text-muted-foreground">Codes: {Object.entries(COLOR_CODES).map(([k,v]) => `${k}=${v}`).join(", ")}</p>
+          <p className="text-xs text-muted-foreground">Codes: {activeList.map(c => `${c.code}=${c.name}`).join(", ")}</p>
         </form>
       </CardContent>
     </Card>
   );
 }
 
-function NewPaintJobOrder({ onDone }: { onDone: () => void }) {
+function NewPaintJobOrder({ modelYears, onDone }: { modelYears: string[]; onDone: () => void }) {
   const { activeList } = useColors();
   const [company, setCompany] = useState("");
   const [code, setCode] = useState("");
   const [units, setUnits] = useState(25);
-  const [modelYear, setModelYear] = useState("2026");
+  const [modelYear, setModelYear] = useState(modelYears[0] ?? "2026");
   const [vins, setVins] = useState("");
-  const [engines, setEngines] = useState("");
   const [colorPlan, setColorPlan] = useState("11U:10\n55U:15");
   const [busy, setBusy] = useState(false);
 
@@ -377,22 +410,8 @@ function NewPaintJobOrder({ onDone }: { onDone: () => void }) {
       const { error: ve } = await supabase.from("vehicles").insert(rows);
       if (ve) throw ve;
 
-      // Create engines if provided
-      const engineList = engines.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length >= 4);
-      if (engineList.length > 0) {
-        const engineRows = engineList.map(en => ({
-          engine_number: en,
-          engine_suffix: en.slice(-4),
-          lot_id: null,
-          job_order_id: jo.id,
-          status: "available" as const,
-        }));
-        const { error: ee } = await supabase.from("engines").insert(engineRows);
-        if (ee) throw ee;
-      }
-
-      toast.success(`Paint Job Order + ${vinList.length} vehicles${engineList.length > 0 ? ` + ${engineList.length} engines` : ""} created`);
-      setCompany(""); setCode(""); setVins(""); setEngines(""); onDone();
+      toast.success(`Paint Job Order + ${vinList.length} vehicles created`);
+      setCompany(""); setCode(""); setVins(""); onDone();
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -412,14 +431,12 @@ function NewPaintJobOrder({ onDone }: { onDone: () => void }) {
             <Select value={modelYear} onValueChange={setModelYear}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="2026">2026</SelectItem>
-                <SelectItem value="2027">2027</SelectItem>
+                {modelYears.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5"><Label>Color plan (CODE:count per line)</Label><Textarea value={colorPlan} onChange={e => setColorPlan(e.target.value)} className="font-mono text-xs" rows={4} /></div>
           <div className="space-y-1.5"><Label>VINs (one per line, 17 chars)</Label><Textarea value={vins} onChange={e => setVins(e.target.value)} className="font-mono text-xs" rows={4} /></div>
-          <div className="space-y-1.5"><Label>Engine numbers (optional, one per line)</Label><Textarea value={engines} onChange={e => setEngines(e.target.value)} className="font-mono text-xs" rows={3} placeholder="Paste engine numbers, one per line" /></div>
           <Button disabled={busy} type="submit" className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Plus className="h-4 w-4 mr-1" /> Create Paint Job Order</>}</Button>
           <p className="text-xs text-muted-foreground">Contract vehicles arrive at WBS, get painted, then leave. No lot assignment needed.</p>
         </form>

@@ -311,6 +311,8 @@ function ReportsTab() {
   const [reportEmails, setReportEmails] = useState<string[]>([]);
   const [newEmail, setNewEmail] = useState("");
   const [resendKey, setResendKey] = useState("");
+  const [modelYears, setModelYears] = useState<string[]>(["2026", "2027"]);
+  const [newYear, setNewYear] = useState("");
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
@@ -321,6 +323,7 @@ function ReportsTab() {
       const dt = settings.find(s => s.key === "delay_threshold");
       const rs = settings.find(s => s.key === "report_schedule");
       const re = settings.find(s => s.key === "report_emails");
+      const my = settings.find(s => s.key === "model_years");
       if (dt?.value && typeof dt.value === "object") setDelayDays((dt.value as any).days ?? 2);
       if (rs?.value && typeof rs.value === "object") {
         const v = rs.value as any;
@@ -332,6 +335,7 @@ function ReportsTab() {
         setReportEmails(v.emails ?? []);
         setResendKey(v.resend_api_key ?? "");
       }
+      if (my?.value && Array.isArray(my.value)) setModelYears(my.value as string[]);
       setLoaded(true);
     };
     load();
@@ -343,6 +347,7 @@ function ReportsTab() {
       await supabase.from("app_settings").upsert({ key: "delay_threshold", value: { days: delayDays } });
       await supabase.from("app_settings").upsert({ key: "report_schedule", value: { enabled: reportEnabled, hours: reportHours } });
       await supabase.from("app_settings").upsert({ key: "report_emails", value: { emails: reportEmails, resend_api_key: resendKey } });
+      await supabase.from("app_settings").upsert({ key: "model_years", value: modelYears });
       toast.success("Settings saved");
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
@@ -438,6 +443,26 @@ function ReportsTab() {
                 ))}
               </div>
             )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Model Years */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Model Years</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">Years available in job order and paint job order forms.</p>
+          <div className="flex flex-wrap gap-1.5">
+            {modelYears.map(y => (
+              <span key={y} className="inline-flex items-center gap-1 text-xs bg-muted rounded-full px-2.5 py-1">
+                {y}
+                <button onClick={() => setModelYears(prev => prev.filter(x => x !== y))} className="text-muted-foreground hover:text-destructive">&times;</button>
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Input value={newYear} onChange={e => setNewYear(e.target.value)} placeholder="2028" className="w-28" onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); const y = newYear.trim(); if (y && /^\d{4}$/.test(y) && !modelYears.includes(y)) { setModelYears(prev => [...prev, y].sort()); setNewYear(""); } } }} />
+            <Button variant="outline" size="sm" onClick={() => { const y = newYear.trim(); if (y && /^\d{4}$/.test(y) && !modelYears.includes(y)) { setModelYears(prev => [...prev, y].sort()); setNewYear(""); } }}><Plus className="h-4 w-4" /></Button>
           </div>
         </CardContent>
       </Card>
