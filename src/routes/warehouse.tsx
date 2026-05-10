@@ -314,7 +314,7 @@ function NewJobOrder({ lots, modelYears, onDone }: { lots: Lot[]; modelYears: st
         const [k, v] = line.split(":").map(s => s.trim());
         if (k && !isNaN(+v)) plan[k.toUpperCase()] = +v;
       });
-      const vinList = vins.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length === 17);
+      const vinList = vins.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length === 17 || s.length === 19);
       if (vinList.length !== units) throw new Error(`VIN count (${vinList.length}) must equal units (${units})`);
 
       // Check for suffix collisions with completed vehicles
@@ -392,7 +392,7 @@ function NewJobOrder({ lots, modelYears, onDone }: { lots: Lot[]; modelYears: st
             </Select>
           </div>
           <div className="space-y-1.5"><Label>Color plan (CODE:count per line)</Label><Textarea value={colorPlan} onChange={e => setColorPlan(e.target.value)} className="font-mono text-xs" rows={4} /></div>
-          <div className="space-y-1.5"><Label>VINs (one per line, 17 chars)</Label><Textarea value={vins} onChange={e => setVins(e.target.value)} className="font-mono text-xs" rows={4} /></div>
+          <div className="space-y-1.5"><Label>VINs (one per line, 17 or 19 chars)</Label><Textarea value={vins} onChange={e => setVins(e.target.value)} className="font-mono text-xs" rows={4} /></div>
           <div className="space-y-1.5"><Label>Engine numbers (one per line, from Excel)</Label><Textarea value={engines} onChange={e => setEngines(e.target.value)} className="font-mono text-xs" rows={3} placeholder="Paste engine numbers, one per line" /></div>
           <Button disabled={busy} type="submit" className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create job order"}</Button>
           <p className="text-xs text-muted-foreground">Codes: {activeList.map(c => `${c.code}=${c.name}`).join(", ")}</p>
@@ -421,7 +421,7 @@ function NewPaintJobOrder({ modelYears, onDone }: { modelYears: string[]; onDone
         const [k, v] = line.split(":").map(s => s.trim());
         if (k && !isNaN(+v)) plan[k.toUpperCase()] = +v;
       });
-      const vinList = vins.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length === 17);
+      const vinList = vins.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length === 17 || s.length === 19);
       if (vinList.length !== units) throw new Error(`VIN count (${vinList.length}) must equal units (${units})`);
 
       // Check for suffix collisions with completed vehicles
@@ -496,7 +496,7 @@ function NewPaintJobOrder({ modelYears, onDone }: { modelYears: string[]; onDone
             </Select>
           </div>
           <div className="space-y-1.5"><Label>Color plan (CODE:count per line)</Label><Textarea value={colorPlan} onChange={e => setColorPlan(e.target.value)} className="font-mono text-xs" rows={4} /></div>
-          <div className="space-y-1.5"><Label>VINs (one per line, 17 chars)</Label><Textarea value={vins} onChange={e => setVins(e.target.value)} className="font-mono text-xs" rows={4} /></div>
+          <div className="space-y-1.5"><Label>VINs (one per line, 17 or 19 chars)</Label><Textarea value={vins} onChange={e => setVins(e.target.value)} className="font-mono text-xs" rows={4} /></div>
           <Button disabled={busy} type="submit" className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Plus className="h-4 w-4 mr-1" /> Create Paint Job Order</>}</Button>
           <p className="text-xs text-muted-foreground">Contract vehicles arrive at WBS, get painted, then leave. No lot assignment needed.</p>
         </form>
@@ -587,7 +587,7 @@ function EditJobDialog({ job, colors, modelYears, onSave, onClose }: {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setBusy(true);
     try {
-      const vinList = vins.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length === 17);
+      const vinList = vins.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length === 17 || s.length === 19);
       if (vinList.length !== units) throw new Error(`VIN count (${vinList.length}) must equal units (${units})`);
 
       // Parse color plan
@@ -627,7 +627,7 @@ function EditJobDialog({ job, colors, modelYears, onSave, onClose }: {
             </div>
           </div>
           <div className="space-y-1.5"><Label>Color plan (CODE:count per line)</Label><Textarea value={colorPlan} onChange={e => setColorPlan(e.target.value)} className="font-mono text-xs" rows={3} /></div>
-          <div className="space-y-1.5"><Label>VINs (one per line, 17 chars)</Label><Textarea value={vins} onChange={e => setVins(e.target.value)} className="font-mono text-xs" rows={5} /></div>
+          <div className="space-y-1.5"><Label>VINs (one per line, 17 or 19 chars)</Label><Textarea value={vins} onChange={e => setVins(e.target.value)} className="font-mono text-xs" rows={5} /></div>
           <p className="text-xs text-warning">Saving will replace all vehicles in this job order.</p>
           <p className="text-xs text-muted-foreground">Codes: {activeList.map(c => `${c.code}=${c.name}`).join(", ")}</p>
           <div className="flex gap-2 justify-end">

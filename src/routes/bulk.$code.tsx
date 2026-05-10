@@ -57,7 +57,7 @@ function Page() {
       const matched: { id: string; vin: string }[] = [];
       const missing: string[] = [];
       for (const t of tokens) {
-        const q = t.length === 17
+        const q = t.length === 17 || t.length === 19
           ? supabase.from("vehicles").select("id, vin").eq("vin", t).is("completed_at", null).maybeSingle()
           : supabase.from("vehicles").select("id, vin").ilike("vin_suffix", `%${t.slice(-5)}`).is("completed_at", null).limit(1).maybeSingle();
         const { data } = await q;
