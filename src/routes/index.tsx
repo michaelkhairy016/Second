@@ -31,16 +31,19 @@ function Home() {
 
   useEffect(() => {
     (async () => {
-      const [{ data: vs }, { count: shortageCount }, { count: issueCount }] = await Promise.all([
+      const [{ data: vs }, { count: shortageCount }, { count: issueCount }, { data: lots }] = await Promise.all([
         supabase.from("vehicles").select("current_station").is("completed_at", null),
         supabase.from("shortages").select("id", { count: "exact", head: true }).eq("status", "open"),
         supabase.from("issues").select("id", { count: "exact", head: true }).in("status", ["open", "in_progress"]),
+        supabase.from("lots").select("producible_units").eq("status", "active"),
       ]);
       const vehicles = vs ?? [];
       const counts: Record<string, number> = {};
       vehicles.forEach(v => {
         if (v.current_station) counts[v.current_station] = (counts[v.current_station] ?? 0) + 1;
       });
+      // Warehouse shows producible units across all active lots, not vehicle count
+      counts["warehouse"] = (lots ?? []).reduce((sum, l) => sum + ((l as any).producible_units ?? 0), 0);
       setStationCounts(counts);
       setStats({
         total: vehicles.length,
