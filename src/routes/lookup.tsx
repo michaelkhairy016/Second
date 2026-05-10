@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeft, Search } from "lucide-react";
 import { useState, useEffect } from "react";
-import { findBySuffix } from "@/lib/vin";
+import { findBySuffix, stripVinStars } from "@/lib/vin";
 import { findEngineBySuffix } from "@/lib/engine";
 import type { VehicleSearchResult, EngineSearchResult, Model, ModelTrim } from "@/lib/db-types";
 import { supabase } from "@/integrations/supabase/client";

@@ -4,6 +4,7 @@ import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/lib/auth-context";
 import { useEffect, useState } from "react";
 import { stationByCode } from "@/lib/stations";
+import { stripVinStars } from "@/lib/vin";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -56,12 +57,13 @@ function Page() {
       // Look them up: support full VIN or suffix — exclude completed vehicles
       const matched: { id: string; vin: string }[] = [];
       const missing: string[] = [];
-      for (const t of tokens) {
-        const q = t.length === 17 || t.length === 19
-          ? supabase.from("vehicles").select("id, vin").eq("vin", t).is("completed_at", null).maybeSingle()
-          : supabase.from("vehicles").select("id, vin").ilike("vin_suffix", `%${t.slice(-5)}`).is("completed_at", null).limit(1).maybeSingle();
+      for (const raw of tokens) {
+        const clean = stripVinStars(raw);
+        const q = clean.length === 17
+          ? supabase.from("vehicles").select("id, vin").in("vin", [clean, `*${clean}*`]).is("completed_at", null).maybeSingle()
+          : supabase.from("vehicles").select("id, vin").ilike("vin_suffix", `%${clean.slice(-5)}`).is("completed_at", null).limit(1).maybeSingle();
         const { data } = await q;
-        if (data) matched.push(data); else missing.push(t);
+        if (data) matched.push(data); else missing.push(raw);
       }
       if (matched.length === 0) throw new Error("No vehicles found");
 

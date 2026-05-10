@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { findBySuffix } from "@/lib/vin";
+import { findBySuffix, stripVinStars } from "@/lib/vin";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, FileSpreadsheet, Plus, X, Package } from "lucide-react";
@@ -522,12 +522,13 @@ function BulkPasteSection({ station }: { station: StationCode }) {
 
       const matched: { id: string; vin: string }[] = [];
       const missing: string[] = [];
-      for (const t of tokens) {
-        const q = t.length === 17 || t.length === 19
-          ? supabase.from("vehicles").select("id, vin").eq("vin", t).is("completed_at", null).maybeSingle()
-          : supabase.from("vehicles").select("id, vin").ilike("vin_suffix", `%${t.slice(-5)}`).is("completed_at", null).limit(1).maybeSingle();
+      for (const raw of tokens) {
+        const clean = stripVinStars(raw);
+        const q = clean.length === 17
+          ? supabase.from("vehicles").select("id, vin").in("vin", [clean, `*${clean}*`]).is("completed_at", null).maybeSingle()
+          : supabase.from("vehicles").select("id, vin").ilike("vin_suffix", `%${clean.slice(-5)}`).is("completed_at", null).limit(1).maybeSingle();
         const { data } = await q;
-        if (data) matched.push(data); else missing.push(t);
+        if (data) matched.push(data); else missing.push(raw);
       }
       if (matched.length === 0) throw new Error("No vehicles found");
 

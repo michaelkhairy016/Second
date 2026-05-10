@@ -13,9 +13,10 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/EmptyState";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Boxes, ClipboardList, Loader2, Plus, Printer, FileSpreadsheet, Pencil, X } from "lucide-react";
+import { ArrowLeft, Boxes, ClipboardList, Loader2, Plus, Printer, FileSpreadsheet, Pencil, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { exportToCSV } from "@/lib/export";
+import { stripVinStars } from "@/lib/vin";
 import { JobOrderPrintView } from "@/components/JobOrderPrintView";
 import type { Lot, JobOrder, Engine, Model, ModelTrim } from "@/lib/db-types";
 import { useColors } from "@/hooks/use-colors";
@@ -26,7 +27,7 @@ export const Route = createFileRoute("/warehouse")({
 });
 
 function Page() {
-  const { hasStation } = useAuth();
+  const { hasStation, isSuperuser } = useAuth();
   const nav = useNavigate();
   const { getCode, list: allColors } = useColors();
   useEffect(() => { if (!hasStation("warehouse")) { toast.error("No access"); nav({ to: "/" }); } }, [hasStation, nav]);
@@ -53,6 +54,24 @@ function Page() {
     setPrintEngines(engines ?? []);
     setTimeout(() => window.print(), 150);
   };
+
+  const handleDeleteJob = async (job: JobOrder) => {
+    if (!confirm(`Delete job order ${job.job_code} and all its vehicles?`)) return;
+    await supabase.from("vehicles").delete().eq("job_order_id", job.id);
+    const { error } = await supabase.from("job_orders").delete().eq("id", job.id);
+    if (error) toast.error(error.message); else { toast.success("Job order deleted"); reload(); }
+  };
+
+  const handleDeleteLot = async (lot: Lot) => {
+    if (!confirm(`Delete lot ${lot.lot_code} and all its job orders and vehicles?`)) return;
+    const { data: lotJobs } = await supabase.from("job_orders").select("id").eq("lot_id", lot.id);
+    for (const j of lotJobs ?? []) await supabase.from("vehicles").delete().eq("job_order_id", j.id);
+    await supabase.from("job_orders").delete().eq("lot_id", lot.id);
+    await supabase.from("vehicles").delete().eq("lot_id", lot.id);
+    const { error } = await supabase.from("lots").delete().eq("id", lot.id);
+    if (error) toast.error(error.message); else { toast.success("Lot deleted"); reload(); }
+  };
+
   const reload = async () => {
     const [{ data: l }, { data: j }, { data: vc }, { data: m }, { data: t }, { data: s }] = await Promise.all([
       supabase.from("lots").select("*").order("created_at", { ascending: false }),
@@ -183,7 +202,10 @@ function Page() {
                           <Badge variant={l.status === "active" ? "default" : "secondary"}>{l.status}</Badge>
                         </td>
                         <td className="py-2 px-2 text-center">
-                          {canEditLots[l.id] && <button onClick={() => setEditLot(l)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>}
+                          <div className="flex items-center justify-center gap-1">
+                            {canEditLots[l.id] && <button onClick={() => setEditLot(l)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>}
+                            {isSuperuser && <button onClick={() => handleDeleteLot(l)} className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -209,6 +231,7 @@ function Page() {
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground font-mono">{Object.entries(j.color_plan ?? {}).map(([k,v]) => `${getCode(k)}:${v}`).join(" ")}</span>
                     {canEditJobs[j.id] && <button onClick={() => setEditJob(j)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>}
+                    {isSuperuser && <button onClick={() => handleDeleteJob(j)} className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>}
                     <Button variant="outline" size="sm" className="h-7 no-print" onClick={() => handlePrint(j)}><Printer className="h-3.5 w-3.5 mr-1" />Print</Button>
                   </div>
                 </li>
@@ -233,7 +256,7 @@ function Page() {
             Object.entries(newColorPlan).forEach(([uuid, n]) => { for (let i = 0; i < n; i++) planFlat.push(uuid); });
             while (planFlat.length < newVins.length) planFlat.push(Object.keys(newColorPlan)[0]);
             const rows = newVins.map((vin: string, i: number) => ({
-              vin, vin_suffix: vin.slice(-5), lot_id: (editJob as any).lot_id ?? null, job_order_id: editJob.id, planned_color_id: planFlat[i] ?? null, current_station: "warehouse" as const,
+              vin, vin_suffix: stripVinStars(vin).slice(-5), lot_id: (editJob as any).lot_id ?? null, job_order_id: editJob.id, planned_color_id: planFlat[i] ?? null, current_station: "warehouse" as const,
             }));
             const { error: iv } = await supabase.from("vehicles").insert(rows);
             if (iv) throw iv;
@@ -345,7 +368,7 @@ function NewJobOrder({ lots, modelYears, onDone }: { lots: Lot[]; modelYears: st
       while (planFlat.length < units) planFlat.push(Object.keys(planWithUuids)[0]);
 
       const rows = vinList.map((vin, i) => ({
-        vin, vin_suffix: vin.slice(-5), lot_id: lotId, job_order_id: jo.id, planned_color_id: planFlat[i] ?? null, current_station: "warehouse" as const,
+        vin, vin_suffix: stripVinStars(vin).slice(-5), lot_id: lotId, job_order_id: jo.id, planned_color_id: planFlat[i] ?? null, current_station: "warehouse" as const,
       }));
       const { error: ve } = await supabase.from("vehicles").insert(rows);
       if (ve) throw ve;
@@ -461,7 +484,7 @@ function NewPaintJobOrder({ modelYears, onDone }: { modelYears: string[]; onDone
 
       const rows = vinList.map((vin, i) => ({
         vin,
-        vin_suffix: vin.slice(-5),
+        vin_suffix: stripVinStars(vin).slice(-5),
         lot_id: null,
         job_order_id: jo.id,
         planned_color_id: planFlat[i] ?? null,

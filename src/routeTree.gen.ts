@@ -13,6 +13,7 @@ import { Route as WarehouseRouteImport } from './routes/warehouse'
 import { Route as StatusRouteImport } from './routes/status'
 import { Route as ShortagesRouteImport } from './routes/shortages'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as RestrictionsRouteImport } from './routes/restrictions'
 import { Route as RequestsRouteImport } from './routes/requests'
 import { Route as LookupRouteImport } from './routes/lookup'
 import { Route as LoginRouteImport } from './routes/login'
@@ -23,7 +24,6 @@ import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as RestrictionsRouteImport } from './routes/restrictions'
 import { Route as StationCodeRouteImport } from './routes/station.$code'
 import { Route as BulkCodeRouteImport } from './routes/bulk.$code'
 
@@ -45,6 +45,11 @@ const ShortagesRoute = ShortagesRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RestrictionsRoute = RestrictionsRouteImport.update({
+  id: '/restrictions',
+  path: '/restrictions',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RequestsRoute = RequestsRouteImport.update({
@@ -95,11 +100,6 @@ const AdminRoute = AdminRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RestrictionsRoute = RestrictionsRouteImport.update({
-  id: '/restrictions',
-  path: '/restrictions',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StationCodeRoute = StationCodeRouteImport.update({
@@ -281,6 +281,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/restrictions': {
+      id: '/restrictions'
+      path: '/restrictions'
+      fullPath: '/restrictions'
+      preLoaderRoute: typeof RestrictionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/requests': {
       id: '/requests'
       path: '/requests'
@@ -349,13 +356,6 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/restrictions': {
-      id: '/restrictions'
-      path: '/restrictions'
-      fullPath: '/restrictions'
-      preLoaderRoute: typeof RestrictionsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/station/$code': {
