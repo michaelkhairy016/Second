@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/EmptyState";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Boxes, ClipboardList, Loader2, Plus, Printer, FileSpreadsheet } from "lucide-react";
+import { ArrowLeft, Boxes, ClipboardList, Loader2, Plus, Printer, FileSpreadsheet, Pencil, X } from "lucide-react";
 import { toast } from "sonner";
 import { exportToCSV } from "@/lib/export";
 import { JobOrderPrintView } from "@/components/JobOrderPrintView";
@@ -39,6 +40,10 @@ function Page() {
   const [printLot, setPrintLot] = useState<Lot | null>(null);
   const [printEngines, setPrintEngines] = useState<Engine[]>([]);
   const [lotVehicleCounts, setLotVehicleCounts] = useState<Record<string, number>>({});
+  const [canEditLots, setCanEditLots] = useState<Record<string, boolean>>({});
+  const [canEditJobs, setCanEditJobs] = useState<Record<string, boolean>>({});
+  const [editLot, setEditLot] = useState<Lot | null>(null);
+  const [editJob, setEditJob] = useState<JobOrder | null>(null);
 
   const handlePrint = async (job: JobOrder) => {
     const { data: lot } = job.lot_id ? await supabase.from("lots").select("*").eq("id", job.lot_id).maybeSingle() : { data: null as Lot | null };
@@ -52,17 +57,43 @@ function Page() {
     const [{ data: l }, { data: j }, { data: vc }, { data: m }, { data: t }, { data: s }] = await Promise.all([
       supabase.from("lots").select("*").order("created_at", { ascending: false }),
       supabase.from("job_orders").select("*").order("created_at", { ascending: false }),
-      supabase.from("vehicles").select("lot_id").is("completed_at", null),
+      supabase.from("vehicles").select("lot_id, job_order_id, current_station").is("completed_at", null),
       supabase.from("models").select("*").eq("active", true).order("name"),
       supabase.from("model_trims").select("*").eq("active", true).order("sort_order"),
       supabase.from("app_settings").select("*").eq("key", "model_years").maybeSingle(),
     ]);
     setLots(l ?? []); setJobs(j ?? []); setModels(m ?? []); setTrims(t ?? []);
     if (s?.value && Array.isArray(s.value)) setModelYears(s.value as string[]);
-    // Count vehicles per lot (in warehouse or in production, not completed)
+    const vehicles = (vc ?? []) as { lot_id: string | null; job_order_id: string | null; current_station: string | null }[];
+    // Count vehicles per lot
     const counts: Record<string, number> = {};
-    (vc ?? []).forEach((v: any) => { if (v.lot_id) counts[v.lot_id] = (counts[v.lot_id] ?? 0) + 1; });
+    vehicles.forEach(v => { if (v.lot_id) counts[v.lot_id] = (counts[v.lot_id] ?? 0) + 1; });
     setLotVehicleCounts(counts);
+    // Compute canEdit: only if ALL vehicles still at warehouse
+    const lotAllWarehouse: Record<string, boolean> = {};
+    const jobAllWarehouse: Record<string, boolean> = {};
+    const lotVehicleStations: Record<string, Set<string>> = {};
+    const jobVehicleStations: Record<string, Set<string>> = {};
+    vehicles.forEach(v => {
+      if (v.lot_id) {
+        lotVehicleStations[v.lot_id] = lotVehicleStations[v.lot_id] ?? new Set();
+        lotVehicleStations[v.lot_id].add(v.current_station ?? "");
+      }
+      if (v.job_order_id) {
+        jobVehicleStations[v.job_order_id] = jobVehicleStations[v.job_order_id] ?? new Set();
+        jobVehicleStations[v.job_order_id].add(v.current_station ?? "");
+      }
+    });
+    (l ?? []).forEach(lot => {
+      const stations = lotVehicleStations[lot.id];
+      lotAllWarehouse[lot.id] = !stations || stations.size === 0 || (stations.size === 1 && stations.has("warehouse"));
+    });
+    (j ?? []).forEach(job => {
+      const stations = jobVehicleStations[job.id];
+      jobAllWarehouse[job.id] = !stations || stations.size === 0 || (stations.size === 1 && stations.has("warehouse"));
+    });
+    setCanEditLots(lotAllWarehouse);
+    setCanEditJobs(jobAllWarehouse);
   };
 
   const handleExportLots = () => {
@@ -118,6 +149,7 @@ function Page() {
                     <th className="text-center py-2 px-2 font-medium text-muted-foreground">Available</th>
                     <th className="text-center py-2 px-2 font-medium text-muted-foreground">Producible</th>
                     <th className="text-center py-2 px-2 font-medium text-muted-foreground">Status</th>
+                    <th className="text-center py-2 px-2 font-medium text-muted-foreground w-10"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -150,6 +182,9 @@ function Page() {
                         <td className="py-2 px-2 text-center">
                           <Badge variant={l.status === "active" ? "default" : "secondary"}>{l.status}</Badge>
                         </td>
+                        <td className="py-2 px-2 text-center">
+                          {canEditLots[l.id] && <button onClick={() => setEditLot(l)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>}
+                        </td>
                       </tr>
                     );
                   })}
@@ -173,6 +208,7 @@ function Page() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground font-mono">{Object.entries(j.color_plan ?? {}).map(([k,v]) => `${getCode(k)}:${v}`).join(" ")}</span>
+                    {canEditJobs[j.id] && <button onClick={() => setEditJob(j)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>}
                     <Button variant="outline" size="sm" className="h-7 no-print" onClick={() => handlePrint(j)}><Printer className="h-3.5 w-3.5 mr-1" />Print</Button>
                   </div>
                 </li>
@@ -181,6 +217,30 @@ function Page() {
           )}
         </CardContent>
       </Card>
+
+      {editLot && <EditLotDialog lot={editLot} models={models} trims={trims} onSave={async (updates) => {
+        const { error } = await supabase.from("lots").update(updates as any).eq("id", editLot.id);
+        if (error) toast.error(error.message); else { toast.success("Lot updated"); setEditLot(null); reload(); }
+      }} onClose={() => setEditLot(null)} />}
+
+      {editJob && <EditJobDialog job={editJob} colors={allColors} modelYears={modelYears} onSave={async (updates, newVins, newColorPlan) => {
+        try {
+          await supabase.from("vehicles").delete().eq("job_order_id", editJob.id);
+          const { error: uj } = await supabase.from("job_orders").update(updates as any).eq("id", editJob.id);
+          if (uj) throw uj;
+          if (newVins.length > 0) {
+            const planFlat: string[] = [];
+            Object.entries(newColorPlan).forEach(([uuid, n]) => { for (let i = 0; i < n; i++) planFlat.push(uuid); });
+            while (planFlat.length < newVins.length) planFlat.push(Object.keys(newColorPlan)[0]);
+            const rows = newVins.map((vin: string, i: number) => ({
+              vin, vin_suffix: vin.slice(-5), lot_id: (editJob as any).lot_id ?? null, job_order_id: editJob.id, planned_color_id: planFlat[i] ?? null, current_station: "warehouse" as const,
+            }));
+            const { error: iv } = await supabase.from("vehicles").insert(rows);
+            if (iv) throw iv;
+          }
+          toast.success("Job order updated"); setEditJob(null); reload();
+        } catch (e: any) { toast.error(e.message); }
+      }} onClose={() => setEditJob(null)} />}
 
       {/* Print area — hidden on screen, visible only when printing */}
       {printJob && <JobOrderPrintView jobOrder={printJob} lot={printLot} engines={printEngines} colors={allColors} isContract={(printJob as any).is_contract} contractCompany={(printJob as any).contract_company} />}
@@ -442,5 +502,140 @@ function NewPaintJobOrder({ modelYears, onDone }: { modelYears: string[]; onDone
         </form>
       </CardContent>
     </Card>
+  );
+}
+
+function EditLotDialog({ lot, models, trims, onSave, onClose }: {
+  lot: Lot; models: Model[]; trims: ModelTrim[]; onSave: (updates: Record<string, any>) => void; onClose: () => void;
+}) {
+  const [code, setCode] = useState(lot.lot_code);
+  const [chineseNumber, setChineseNumber] = useState(lot.chinese_number ?? "");
+  const [modelName, setModelName] = useState(lot.model.includes(" — ") ? lot.model.split(" — ")[0] : lot.model);
+  const [trimName, setTrimName] = useState(lot.model.includes(" — ") ? lot.model.split(" — ")[1] : "");
+  const [units, setUnits] = useState(lot.total_units);
+  const [busy, setBusy] = useState(false);
+
+  const selectedModel = models.find(m => m.name === modelName);
+  const modelTrims = selectedModel ? trims.filter(t => t.model_id === selectedModel.id) : [];
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); setBusy(true);
+    const modelValue = trimName ? `${modelName} — ${trimName}` : modelName;
+    onSave({ lot_code: code.trim(), chinese_number: chineseNumber.trim() || null, model: modelValue.trim(), total_units: units, producible_units: Math.min((lot as any).producible_units ?? units, units) });
+    setBusy(false);
+  };
+
+  return (
+    <Dialog open onOpenChange={() => onClose()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Edit Lot: {lot.lot_code}</DialogTitle></DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="space-y-1.5"><Label>LOT No</Label><Input value={code} onChange={e => setCode(e.target.value)} required /></div>
+          <div className="space-y-1.5"><Label>Chinese number</Label><Input value={chineseNumber} onChange={e => setChineseNumber(e.target.value)} placeholder="Optional" /></div>
+          <div className="space-y-1.5"><Label>Model</Label>
+            {models.length > 0 ? (
+              <Select value={modelName} onValueChange={v => { setModelName(v); setTrimName(""); }}>
+                <SelectTrigger><SelectValue placeholder="Select model..." /></SelectTrigger>
+                <SelectContent>
+                  {models.map(m => <SelectItem key={m.id} value={m.name}>{m.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input value={modelName} onChange={e => setModelName(e.target.value)} required />
+            )}
+          </div>
+          {modelTrims.length > 0 && (
+            <div className="space-y-1.5"><Label>Trim level</Label>
+              <Select value={trimName} onValueChange={setTrimName}>
+                <SelectTrigger><SelectValue placeholder="Select trim..." /></SelectTrigger>
+                <SelectContent>
+                  {modelTrims.map(t => <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <div className="space-y-1.5"><Label>Total units</Label><Input type="number" min={1} value={units} onChange={e => setUnits(+e.target.value)} required /></div>
+          {units !== lot.total_units && <p className="text-xs text-warning">Changing units will add/remove vehicles at warehouse.</p>}
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" type="button" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditJobDialog({ job, colors, modelYears, onSave, onClose }: {
+  job: JobOrder; colors: { id: string; code: string; name: string; active: boolean }[]; modelYears: string[];
+  onSave: (updates: Record<string, any>, newVins: string[], newColorPlan: Record<string, number>) => void; onClose: () => void;
+}) {
+  const activeList = colors.filter(c => c.active);
+  // Convert UUID color_plan back to CODE:count format
+  const initialColorText = Object.entries((job.color_plan as Record<string, number>) ?? {}).map(([uuid, qty]) => {
+    const c = activeList.find(cl => cl.id === uuid);
+    return c ? `${c.code}:${qty}` : `${uuid}:${qty}`;
+  }).join("\n");
+
+  const [code, setCode] = useState(job.job_code);
+  const [modelYear, setModelYear] = useState(job.model_year ?? modelYears[0] ?? "2026");
+  const [units, setUnits] = useState(job.units);
+  const [colorPlan, setColorPlan] = useState(initialColorText);
+  const [vins, setVins] = useState((job.vin_sequence ?? []).join("\n"));
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); setBusy(true);
+    try {
+      const vinList = vins.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length === 17);
+      if (vinList.length !== units) throw new Error(`VIN count (${vinList.length}) must equal units (${units})`);
+
+      // Parse color plan
+      const planWithUuids: Record<string, number> = {};
+      colorPlan.split("\n").map(s => s.trim()).filter(Boolean).forEach(line => {
+        const [k, v] = line.split(":").map(s => s.trim());
+        if (k && !isNaN(+v)) {
+          const color = activeList.find(c => c.code === k.toUpperCase());
+          if (color) planWithUuids[color.id] = +v;
+        }
+      });
+      if (Object.keys(planWithUuids).length === 0) throw new Error("No valid color codes found");
+
+      onSave(
+        { job_code: code.trim(), units, color_plan: planWithUuids, vin_sequence: vinList, model_year: modelYear },
+        vinList,
+        planWithUuids,
+      );
+    } catch (err: any) { toast.error(err.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Dialog open onOpenChange={() => onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>Edit Job Order: {job.job_code}</DialogTitle></DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="space-y-1.5"><Label>Job code</Label><Input value={code} onChange={e => setCode(e.target.value)} required /></div>
+          <div className="flex gap-3">
+            <div className="space-y-1.5 flex-1"><Label>Units</Label><Input type="number" min={1} value={units} onChange={e => setUnits(+e.target.value)} required /></div>
+            <div className="space-y-1.5 flex-1"><Label>Model year</Label>
+              <Select value={modelYear} onValueChange={setModelYear}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {modelYears.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-1.5"><Label>Color plan (CODE:count per line)</Label><Textarea value={colorPlan} onChange={e => setColorPlan(e.target.value)} className="font-mono text-xs" rows={3} /></div>
+          <div className="space-y-1.5"><Label>VINs (one per line, 17 chars)</Label><Textarea value={vins} onChange={e => setVins(e.target.value)} className="font-mono text-xs" rows={5} /></div>
+          <p className="text-xs text-warning">Saving will replace all vehicles in this job order.</p>
+          <p className="text-xs text-muted-foreground">Codes: {activeList.map(c => `${c.code}=${c.name}`).join(", ")}</p>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" type="button" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

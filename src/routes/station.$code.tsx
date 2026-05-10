@@ -429,15 +429,15 @@ function ScanForm({ station }: { station: StationCode }) {
         <div className="flex gap-2 pt-1">
           {station === "paint" ? (
             <Button disabled={!picked || busy} className="w-full" onClick={() => submit("in")}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Assign Color"}
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <>IN to {stationByCode(station)?.label ?? station}</>}
             </Button>
           ) : (
             <>
               <Button variant="outline" disabled={!picked || busy} className="flex-1" onClick={() => submit("in")}>
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> IN</>}
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> IN to {stationByCode(station)?.label ?? station}</>}
               </Button>
               <Button disabled={!picked || busy} className="flex-1" onClick={() => submit("out")}>
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <>OUT <ArrowRight className="h-4 w-4 ml-1" /></>}
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <>OUT of {stationByCode(station)?.label ?? station} <ArrowRight className="h-4 w-4 ml-1" /></>}
               </Button>
             </>
           )}
@@ -511,6 +511,7 @@ function BulkPasteSection({ station }: { station: StationCode }) {
   const [kind, setKind] = useState<"in" | "out">("in");
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<{ matched: number; missing: string[] } | null>(null);
+  const stationLabel = stationByCode(station)?.label ?? station;
   const [showBulk, setShowBulk] = useState(false);
 
   const run = async () => {
@@ -563,8 +564,8 @@ function BulkPasteSection({ station }: { station: StationCode }) {
         <div className="flex gap-2 items-center">
           <Label className="text-sm">Direction</Label>
           <select value={kind} onChange={e => setKind(e.target.value as "in" | "out")} className="border rounded-md px-2 py-1 text-sm bg-background">
-            <option value="in">IN to WBS (Body)</option>
-            <option value="out">OUT of WBS (Body)</option>
+            <option value="in">IN to {stationLabel}</option>
+            <option value="out">OUT of {stationLabel}</option>
           </select>
           <Button className="ml-auto" disabled={busy} onClick={run}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply to all"}</Button>
         </div>
