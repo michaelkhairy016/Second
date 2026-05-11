@@ -4,11 +4,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { STATIONS } from "@/lib/stations";
 import { Link2, Clock } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
-import type { Vehicle, Issue } from "@/lib/db-types";
+import type { FlowVehicle } from "@/hooks/use-flow-data";
 
 interface Props {
   stationKey: string;
-  vehicles: Array<Vehicle & { activeIssues: Issue[]; resolvedIssues: Issue[]; enteredAt: string | null }>;
+  vehicles: FlowVehicle[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
