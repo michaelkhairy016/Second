@@ -286,7 +286,7 @@ function ScanForm({ station }: { station: StationCode }) {
     return () => { cancel = true; };
   }, [debouncedSuffix]);
 
-  useEffect(() => { setPicked(null); setColor(""); setLotShortageWarning(null); setRestrictions([]); }, [debouncedSuffix]);
+  useEffect(() => { setPicked(null); setColor(""); setLotShortageWarning(null); setRestrictions([]); setIssueText(""); }, [debouncedSuffix]);
 
   const submit = async (kind: "in" | "out") => {
     if (!picked) return toast.error("Pick a VIN first");
@@ -335,6 +335,16 @@ function ScanForm({ station }: { station: StationCode }) {
       }
 
       const user = (await supabase.auth.getUser()).data.user;
+
+      // Create issue if issueText provided
+      if (issueText.trim()) {
+        const { error: ie } = await supabase.from("issues").insert({
+          vehicle_id: picked.id, station, title: issueText.trim(),
+          severity: "medium", status: "open", reported_by: user?.id ?? null,
+        });
+        if (ie) toast.warning(`Issue save failed: ${ie.message}`);
+      }
+
       const { error } = await supabase.from("station_events").insert({
         vehicle_id: picked.id, station, kind, color_used_id: null, recorded_by: user?.id, source: "manual",
         meta: null,
@@ -356,7 +366,7 @@ function ScanForm({ station }: { station: StationCode }) {
       if (picked.is_lot_tail) toast.warning(`⚠️ Lot-tail vehicle: ${picked.tail_note ?? "Flagged"}`);
       if (lotShortageWarning && kind === "out") toast.warning(`⚠️ Vehicle released despite lot shortages`);
       toast.success(`Recorded: ${picked.vin.slice(-5)} ${kind.toUpperCase()}`);
-      setSuffix(""); setPicked(null); setColor("");
+      setSuffix(""); setPicked(null); setColor(""); setIssueText("");
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
 
@@ -425,6 +435,13 @@ function ScanForm({ station }: { station: StationCode }) {
 
         {station !== "paint" && picked && (
           <VehicleConditionSection vehicleId={picked.id} station={station} />
+        )}
+
+        {station !== "paint" && picked && (
+          <div className="space-y-1.5">
+            <Label htmlFor="issue-text">Issue (optional)</Label>
+            <Input id="issue-text" value={issueText} onChange={e => setIssueText(e.target.value)} placeholder="Describe issue or leave empty" onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit("in"); } }} />
+          </div>
         )}
 
         <div className="flex gap-2 pt-1">

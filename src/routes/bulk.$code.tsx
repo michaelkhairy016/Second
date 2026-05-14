@@ -8,9 +8,12 @@ import { stripVinStars } from "@/lib/vin";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Pencil, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { StationCode } from "@/lib/db-types";
@@ -24,6 +27,16 @@ const DIRECTION_CONSTRAINTS: Partial<Record<StationCode, "in" | "out" | "both">>
   cs: "both",
   pdi: "both",
 };
+
+interface PendingVin {
+  raw: string;
+  id: string;
+  vin: string;
+  currentStation: string | null;
+  model: string;
+  found: boolean;
+  editing: boolean;
+}
 
 export const Route = createFileRoute("/bulk/$code")({
   head: ({ params }) => ({ meta: [{ title: `Bulk ${stationByCode(params.code)?.label} — AFA Shopfloor` }] }),
@@ -41,46 +54,119 @@ function Page() {
   const [kind, setKind] = useState<"in" | "out">("in");
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<{ matched: number; missing: string[] } | null>(null);
+  const [pendingVins, setPendingVins] = useState<PendingVin[]>([]);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editValue, setEditValue] = useState("");
 
   if (!station) return null;
 
-  // Determine allowed direction for this station
   const allowedDir = DIRECTION_CONSTRAINTS[station.code as StationCode] ?? "both";
   const effectiveKind = allowedDir !== "both" ? allowedDir : kind;
 
-  const run = async () => {
-    setBusy(true); setReport(null);
+  const lookupVins = async () => {
+    setBusy(true);
     try {
       const tokens = text.split(/\s+|[,;]/).map(s => s.trim().toUpperCase()).filter(Boolean);
       if (tokens.length === 0) throw new Error("Paste at least one VIN or suffix");
 
-      // Look them up: support full VIN or suffix — exclude completed vehicles
-      const matched: { id: string; vin: string }[] = [];
-      const missing: string[] = [];
+      // Collect all lot IDs for batch model lookup
+      const results: PendingVin[] = [];
+      const lotIds = new Set<string>();
+
       for (const raw of tokens) {
         const clean = stripVinStars(raw);
         const q = clean.length === 17
-          ? supabase.from("vehicles").select("id, vin").in("vin", [clean, `*${clean}*`]).is("completed_at", null).maybeSingle()
-          : supabase.from("vehicles").select("id, vin").ilike("vin_suffix", `%${clean.slice(-5)}`).is("completed_at", null).limit(1).maybeSingle();
+          ? supabase.from("vehicles").select("id, vin, current_station, lot_id").in("vin", [clean, `*${clean}*`]).is("completed_at", null).maybeSingle()
+          : supabase.from("vehicles").select("id, vin, current_station, lot_id").ilike("vin_suffix", `%${clean.slice(-5)}`).is("completed_at", null).limit(1).maybeSingle();
         const { data } = await q;
-        if (data) matched.push(data); else missing.push(raw);
+        if (data) {
+          lotIds.add(data.lot_id ?? "");
+          results.push({ raw, id: data.id, vin: data.vin, currentStation: data.current_station, model: "", found: true, editing: false });
+        } else {
+          results.push({ raw, id: "", vin: "", currentStation: null, model: "", found: false, editing: false });
+        }
       }
-      if (matched.length === 0) throw new Error("No vehicles found");
 
+      // Batch fetch lot models
+      if (lotIds.size > 0 && !lotIds.has("")) {
+        const { data: lots } = await supabase.from("lots").select("id, model").in("id", [...lotIds].filter(Boolean));
+        const lotModelMap = new Map((lots ?? []).map(l => [l.id, l.model]));
+        // Also need to map vehicle lot_id to model
+        // Re-fetch with lot_id for mapping
+        const vehicleLotMap = new Map<string, string>();
+        for (const r of results) {
+          if (!r.found) continue;
+          const clean = stripVinStars(r.raw);
+          const q = clean.length === 17
+            ? supabase.from("vehicles").select("id, lot_id").eq("id", r.id).maybeSingle()
+            : supabase.from("vehicles").select("id, lot_id").eq("id", r.id).maybeSingle();
+          const { data } = await q;
+          if (data?.lot_id) vehicleLotMap.set(r.id, data.lot_id);
+        }
+        for (const r of results) {
+          if (!r.found) continue;
+          const lotId = vehicleLotMap.get(r.id);
+          if (lotId) r.model = lotModelMap.get(lotId) ?? "—";
+        }
+      }
+
+      const foundCount = results.filter(r => r.found).length;
+      if (foundCount === 0) throw new Error("No vehicles found");
+
+      setPendingVins(results);
+      setDialogOpen(true);
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+
+  const startEdit = (idx: number) => {
+    setEditValue(pendingVins[idx].raw);
+    setPendingVins(prev => prev.map((v, i) => i === idx ? { ...v, editing: true } : v));
+  };
+
+  const cancelEdit = (idx: number) => {
+    setPendingVins(prev => prev.map((v, i) => i === idx ? { ...v, editing: false } : v));
+  };
+
+  const confirmEdit = async (idx: number) => {
+    const raw = editValue.trim().toUpperCase();
+    if (!raw) { cancelEdit(idx); return; }
+    const clean = stripVinStars(raw);
+    const q = clean.length === 17
+      ? supabase.from("vehicles").select("id, vin, current_station, lot_id").in("vin", [clean, `*${clean}*`]).is("completed_at", null).maybeSingle()
+      : supabase.from("vehicles").select("id, vin, current_station, lot_id").ilike("vin_suffix", `%${clean.slice(-5)}`).is("completed_at", null).limit(1).maybeSingle();
+    const { data } = await q;
+
+    setPendingVins(prev => prev.map((v, i) => {
+      if (i !== idx) return v;
+      if (data) {
+        let model = "—";
+        if (data.lot_id) {
+          supabase.from("lots").select("model").eq("id", data.lot_id).maybeSingle()
+            .then(({ data: lot }) => {
+              if (lot) setPendingVins(p => p.map((vv, ii) => ii === idx ? { ...vv, model: lot.model } : vv));
+            });
+        }
+        return { raw, id: data.id, vin: data.vin, currentStation: data.current_station, model, found: true, editing: false };
+      }
+      return { raw, id: "", vin: "", currentStation: null, model: "", found: false, editing: false };
+    }));
+  };
+
+  const executeBulk = async () => {
+    const matched = pendingVins.filter(v => v.found);
+    if (matched.length === 0) { toast.error("No valid vehicles"); return; }
+    setBusy(true);
+    try {
       const user = (await supabase.auth.getUser()).data.user;
       const events = matched.map(m => ({ vehicle_id: m.id, station: station.code as StationCode, kind: effectiveKind as "in" | "out", recorded_by: user?.id, source: "bulk" }));
       const { error: ee } = await supabase.from("station_events").insert(events);
       if (ee) throw ee;
       await supabase.from("vehicles").update({ current_station: station.code }).in("id", matched.map(m => m.id));
 
-      // For OUT events, advance station per flow rules (same as station.$code.tsx)
+      // For OUT events, advance station per flow rules
       if (effectiveKind === "out") {
         const nextStationMap: Partial<Record<StationCode, StationCode>> = {
-          wbs: "paint",
-          pbs: "tcf",
-          tcf: "waiting_repair",
-          waiting_repair: "repair",
-          repair: "cs",
+          wbs: "paint", pbs: "tcf", tcf: "waiting_repair", waiting_repair: "repair", repair: "cs",
         };
         const nextStation = nextStationMap[station.code as StationCode];
         if (nextStation) {
@@ -92,10 +178,16 @@ function Page() {
       if (effectiveKind === "out" && station.code === "pdi") {
         await supabase.from("vehicles").update({ completed_at: new Date().toISOString() }).in("id", matched.map(m => m.id));
       }
-      setReport({ matched: matched.length, missing });
+
+      const missing = pendingVins.filter(v => !v.found);
+      setReport({ matched: matched.length, missing: missing.map(v => v.raw) });
+      setDialogOpen(false);
       toast.success(`Updated ${matched.length} vehicles`);
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
+
+  const foundCount = pendingVins.filter(v => v.found).length;
+  const missingCount = pendingVins.filter(v => !v.found).length;
 
   return (
     <div className="space-y-4 max-w-2xl mx-auto">
@@ -124,7 +216,7 @@ function Page() {
               {allowedDir === "in" ? "IN" : "OUT"} — {station.label}
             </span>
           )}
-          <Button className="ml-auto" disabled={busy} onClick={run}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply to all"}</Button>
+          <Button className="ml-auto" disabled={busy} onClick={lookupVins}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify & Apply"}</Button>
         </div>
         {report && (
           <div className="text-sm space-y-1 pt-2 border-t">
@@ -133,6 +225,54 @@ function Page() {
           </div>
         )}
       </CardContent></Card>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Verify VINs — {effectiveKind === "in" ? "IN to" : "OUT of"} {station.label}</DialogTitle>
+          </DialogHeader>
+          <div className="text-xs text-muted-foreground mb-2">{foundCount} found, {missingCount} not found. Click <Pencil className="h-3 w-3 inline" /> to edit a VIN.</div>
+          <div className="flex-1 overflow-y-auto space-y-1 text-sm">
+            {pendingVins.map((v, idx) => (
+              <div key={idx} className={`flex items-center gap-2 px-3 py-2 rounded-md border ${v.found ? "bg-card" : "bg-destructive/5 border-destructive/30"}`}>
+                <span className="text-xs text-muted-foreground w-6 text-right">{idx + 1}</span>
+                {v.editing ? (
+                  <Input
+                    value={editValue}
+                    onChange={e => setEditValue(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") confirmEdit(idx); if (e.key === "Escape") cancelEdit(idx); }}
+                    className="font-mono text-xs flex-1 h-7"
+                    autoFocus
+                  />
+                ) : (
+                  <span className="font-mono text-xs flex-1 truncate">{v.found ? v.vin.slice(-8) : v.raw}</span>
+                )}
+                {v.found && !v.editing && (
+                  <>
+                    <Badge variant="secondary" className="text-[10px] shrink-0">{stationByCode(v.currentStation ?? "")?.label ?? v.currentStation ?? "?"}</Badge>
+                    <span className="text-xs text-muted-foreground shrink-0 max-w-[120px] truncate">{v.model}</span>
+                  </>
+                )}
+                {!v.found && !v.editing && <Badge variant="destructive" className="text-[10px] shrink-0">Not found</Badge>}
+                {v.editing ? (
+                  <div className="flex gap-1 shrink-0">
+                    <button onClick={() => confirmEdit(idx)} className="p-1 rounded hover:bg-success/20 text-success"><Check className="h-3.5 w-3.5" /></button>
+                    <button onClick={() => cancelEdit(idx)} className="p-1 rounded hover:bg-destructive/20 text-destructive"><X className="h-3.5 w-3.5" /></button>
+                  </div>
+                ) : (
+                  <button onClick={() => startEdit(idx)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground shrink-0"><Pencil className="h-3.5 w-3.5" /></button>
+                )}
+              </div>
+            ))}
+          </div>
+          <DialogFooter className="gap-2 pt-2">
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button disabled={busy || foundCount === 0} onClick={executeBulk}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : `Confirm ${foundCount} vehicle${foundCount !== 1 ? "s" : ""}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
