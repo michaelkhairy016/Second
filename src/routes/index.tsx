@@ -31,17 +31,25 @@ function Home() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.rpc("get_home_stats");
-      if (!data) return;
-      const d = data as any;
-      const counts = (d.station_counts ?? {}) as Record<string, number>;
-      counts["warehouse"] = d.warehouse_producible ?? 0;
+      const [{ data: vs }, { count: shortageCount }, { count: issueCount }, { data: lots }] = await Promise.all([
+        supabase.from("vehicles").select("current_station").is("completed_at", null),
+        supabase.from("shortages").select("id", { count: "exact", head: true }).eq("status", "open"),
+        supabase.from("issues").select("id", { count: "exact", head: true }).in("status", ["open", "in_progress"]),
+        supabase.from("lots").select("producible_units").eq("status", "active"),
+      ]);
+      const vehicles = vs ?? [];
+      const counts: Record<string, number> = {};
+      vehicles.forEach(v => {
+        if (v.current_station) counts[v.current_station] = (counts[v.current_station] ?? 0) + 1;
+      });
+      // Warehouse shows producible units across all active lots, not vehicle count
+      counts["warehouse"] = (lots ?? []).reduce((sum, l) => sum + ((l as any).producible_units ?? 0), 0);
       setStationCounts(counts);
       setStats({
-        total: d.total_vehicles ?? 0,
-        inProduction: d.in_production ?? 0,
-        openShortages: d.open_shortages ?? 0,
-        openIssues: d.open_issues ?? 0,
+        total: vehicles.length,
+        inProduction: vehicles.filter(v => v.current_station && v.current_station !== "warehouse" && v.current_station !== "pdi").length,
+        openShortages: shortageCount ?? 0,
+        openIssues: issueCount ?? 0,
       });
     })();
   }, []);

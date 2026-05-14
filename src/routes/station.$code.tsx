@@ -286,7 +286,7 @@ function ScanForm({ station }: { station: StationCode }) {
     return () => { cancel = true; };
   }, [debouncedSuffix]);
 
-  useEffect(() => { setPicked(null); setColor(""); setLotShortageWarning(null); setRestrictions([]); setIssueText(""); }, [debouncedSuffix]);
+  useEffect(() => { setPicked(null); setColor(""); setLotShortageWarning(null); setRestrictions([]); }, [debouncedSuffix]);
 
   const submit = async (kind: "in" | "out") => {
     if (!picked) return toast.error("Pick a VIN first");
@@ -335,16 +335,9 @@ function ScanForm({ station }: { station: StationCode }) {
       }
 
       const user = (await supabase.auth.getUser()).data.user;
-      const hasIssue = kind === "in" && issueText.trim().length > 0;
-      if (hasIssue) {
-        const { error: ie } = await supabase.from("issues").insert({
-          vehicle_id: picked.id, station, title: issueText.trim(), severity: "medium", status: "open", reported_by: user?.id ?? null,
-        });
-        if (ie) throw ie;
-      }
       const { error } = await supabase.from("station_events").insert({
         vehicle_id: picked.id, station, kind, color_used_id: null, recorded_by: user?.id, source: "manual",
-        meta: { quality: hasIssue ? "issue" : "ok" },
+        meta: null,
       });
       if (error) throw error;
 
@@ -362,8 +355,8 @@ function ScanForm({ station }: { station: StationCode }) {
 
       if (picked.is_lot_tail) toast.warning(`⚠️ Lot-tail vehicle: ${picked.tail_note ?? "Flagged"}`);
       if (lotShortageWarning && kind === "out") toast.warning(`⚠️ Vehicle released despite lot shortages`);
-      toast.success(`Recorded: ${picked.vin.slice(-5)} ${kind.toUpperCase()}${hasIssue ? " (Issue)" : ""}`);
-      setSuffix(""); setPicked(null); setColor(""); setIssueText("");
+      toast.success(`Recorded: ${picked.vin.slice(-5)} ${kind.toUpperCase()}`);
+      setSuffix(""); setPicked(null); setColor("");
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
 
@@ -434,13 +427,6 @@ function ScanForm({ station }: { station: StationCode }) {
           <VehicleConditionSection vehicleId={picked.id} station={station} />
         )}
 
-        {station !== "paint" && picked && (
-          <div className="space-y-1.5">
-            <Label htmlFor="issue">Issue — leave empty if OK</Label>
-            <Input id="issue" value={issueText} onChange={e => setIssueText(e.target.value)} placeholder="Describe issue or leave empty for OK" onKeyDown={e => { if (e.key === "Enter") submit("in"); }} />
-          </div>
-        )}
-
         <div className="flex gap-2 pt-1">
           {station === "paint" ? (
             <Button disabled={!picked || busy} className="w-full" onClick={() => submit("in")}>
@@ -449,7 +435,7 @@ function ScanForm({ station }: { station: StationCode }) {
           ) : (
             <>
               <Button variant="outline" disabled={!picked || busy} className="flex-1" onClick={() => submit("in")}>
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : issueText.trim() ? <><AlertTriangle className="h-4 w-4 mr-1 text-warning" /> IN (Issue)</> : <><CheckCircle2 className="h-4 w-4 mr-1 text-success" /> IN (OK)</>}
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> IN to {stationByCode(station)?.label ?? station}</>}
               </Button>
               <Button disabled={!picked || busy} className="flex-1" onClick={() => submit("out")}>
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <>OUT of {stationByCode(station)?.label ?? station} <ArrowRight className="h-4 w-4 ml-1" /></>}

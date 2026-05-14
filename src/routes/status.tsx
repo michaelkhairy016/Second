@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { RequireAuth } from "@/components/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/lib/auth-context";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { ProductionFlowDiagram } from "@/components/ProductionFlowDiagram";
 import { StationDetailSheet } from "@/components/StationDetailSheet";
@@ -18,9 +18,8 @@ import { Search, AlertCircle, CheckCircle2, XCircle, FileSpreadsheet, Download, 
 import { findBySuffix } from "@/lib/vin";
 import { exportToCSV } from "@/lib/export";
 import { formatDuration } from "@/lib/utils";
-import type { StationCode } from "@/lib/db-types";
+import type { Vehicle, Issue, StationCode } from "@/lib/db-types";
 import { useColors } from "@/hooks/use-colors";
-import { useFlowData } from "@/hooks/use-flow-data";
 
 export const Route = createFileRoute("/status")({
   head: () => ({ meta: [{ title: "Status — AFA Shopfloor" }] }),
@@ -293,7 +292,77 @@ function ShopTable({ title, models, sections }: { title: string; models: string[
 }
 
 function FlowTab() {
-  const { counts, lineFeedingCount, stationVehicles, selectedStation, setSelectedStation } = useFlowData("status-flow");
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [entryMap, setEntryMap] = useState<Record<string, string>>({});
+  const [activeIssues, setActiveIssues] = useState<Record<string, Issue[]>>({});
+  const [resolvedIssues, setResolvedIssues] = useState<Record<string, Issue[]>>({});
+  const [activeJobOrderIds, setActiveJobOrderIds] = useState<Set<string>>(new Set());
+  const [selectedStation, setSelectedStation] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const [{ data: vs }, { data: ev }, { data: ai }, { data: ri }, { data: jos }] = await Promise.all([
+      supabase.from("vehicles").select("id, vin, vin_suffix, current_station, lot_id, job_order_id, planned_color_id, actual_color_id, is_lot_tail, tail_note").is("completed_at", null),
+      supabase.from("station_events").select("vehicle_id, station, recorded_at").eq("kind", "in").order("recorded_at", { ascending: false }),
+      supabase.from("issues").select("*").in("status", ["open", "in_progress"]),
+      supabase.from("issues").select("*").in("status", ["resolved", "closed"]),
+      supabase.from("job_orders").select("id").eq("status", "active"),
+    ]);
+    const vehicles = vs ?? [];
+    setVehicles(vehicles);
+    setActiveJobOrderIds(new Set((jos ?? []).map(j => j.id)));
+
+    // Build entry time map
+    const map: Record<string, string> = {};
+    for (const e of (ev ?? [])) {
+      const v = vehicles.find(v => v.id === e.vehicle_id);
+      if (v && e.station === v.current_station && !map[e.vehicle_id]) {
+        map[e.vehicle_id] = e.recorded_at;
+      }
+    }
+    setEntryMap(map);
+
+    const aiMap: Record<string, Issue[]> = {};
+    (ai ?? []).forEach(i => { if (i.vehicle_id) (aiMap[i.vehicle_id] ??= []).push(i); });
+    setActiveIssues(aiMap);
+
+    const riMap: Record<string, Issue[]> = {};
+    (ri ?? []).forEach(i => { if (i.vehicle_id) (riMap[i.vehicle_id] ??= []).push(i); });
+    setResolvedIssues(riMap);
+  }, []);
+
+  useEffect(() => {
+    load();
+    const ch = supabase.channel("status-flow")
+      .on("postgres_changes", { event: "*", schema: "public", table: "vehicles" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "station_events" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "issues" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "job_orders" }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [load]);
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    vehicles.forEach(v => { if (v.current_station) c[v.current_station] = (c[v.current_station] ?? 0) + 1; });
+    return c;
+  }, [vehicles]);
+
+  const lineFeedingCount = useMemo(() =>
+    vehicles.filter(v => v.current_station === "warehouse" && v.job_order_id && activeJobOrderIds.has(v.job_order_id)).length,
+    [vehicles, activeJobOrderIds]
+  );
+
+  const stationVehicles = useMemo(() => {
+    if (!selectedStation) return [];
+    if (selectedStation === "line_feeding") {
+      return vehicles
+        .filter(v => v.current_station === "warehouse" && v.job_order_id && activeJobOrderIds.has(v.job_order_id))
+        .map(v => ({ ...v, activeIssues: activeIssues[v.id] ?? [], resolvedIssues: resolvedIssues[v.id] ?? [], enteredAt: entryMap[v.id] ?? null }));
+    }
+    return vehicles
+      .filter(v => v.current_station === selectedStation)
+      .map(v => ({ ...v, activeIssues: activeIssues[v.id] ?? [], resolvedIssues: resolvedIssues[v.id] ?? [], enteredAt: entryMap[v.id] ?? null }));
+  }, [selectedStation, vehicles, activeJobOrderIds, activeIssues, resolvedIssues, entryMap]);
 
   return (
     <>
