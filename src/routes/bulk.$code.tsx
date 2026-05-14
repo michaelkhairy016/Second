@@ -75,9 +75,9 @@ function Page() {
 
       for (const raw of tokens) {
         const clean = stripVinStars(raw);
-        const q = clean.length === 17
+        const q = clean.length === 17 || clean.length === 19
           ? supabase.from("vehicles").select("id, vin, current_station, lot_id").in("vin", [clean, `*${clean}*`]).is("completed_at", null).maybeSingle()
-          : supabase.from("vehicles").select("id, vin, current_station, lot_id").ilike("vin_suffix", `%${clean.slice(-5)}`).is("completed_at", null).limit(1).maybeSingle();
+          : supabase.from("vehicles").select("id, vin, current_station, lot_id").ilike("vin_suffix", `%${clean.slice(-4)}`).is("completed_at", null).limit(1).maybeSingle();
         const { data } = await q;
         if (data) {
           lotIds.add(data.lot_id ?? "");
@@ -131,9 +131,9 @@ function Page() {
     const raw = editValue.trim().toUpperCase();
     if (!raw) { cancelEdit(idx); return; }
     const clean = stripVinStars(raw);
-    const q = clean.length === 17
+    const q = clean.length === 17 || clean.length === 19
       ? supabase.from("vehicles").select("id, vin, current_station, lot_id").in("vin", [clean, `*${clean}*`]).is("completed_at", null).maybeSingle()
-      : supabase.from("vehicles").select("id, vin, current_station, lot_id").ilike("vin_suffix", `%${clean.slice(-5)}`).is("completed_at", null).limit(1).maybeSingle();
+      : supabase.from("vehicles").select("id, vin, current_station, lot_id").ilike("vin_suffix", `%${clean.slice(-4)}`).is("completed_at", null).limit(1).maybeSingle();
     const { data } = await q;
 
     setPendingVins(prev => prev.map((v, i) => {
@@ -194,12 +194,12 @@ function Page() {
       <button onClick={() => nav({ to: "/" })} className="text-sm text-muted-foreground inline-flex items-center gap-1 hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Stations</button>
       <div className="flex items-center gap-3">
         <div className="h-11 w-11 rounded-lg bg-info/10 text-info grid place-items-center"><station.icon className="h-6 w-6" /></div>
-        <div><h1 className="text-xl font-semibold">Bulk: {station.label}</h1><p className="text-sm text-muted-foreground">Paste a column from Excel — full VINs or suffixes.</p></div>
+        <div><h1 className="text-xl font-semibold">Bulk: {station.label}</h1><p className="text-sm text-muted-foreground">Paste from Excel or manual sheets — full VINs, last 4 or last 5 digits.</p></div>
       </div>
 
       <Card><CardContent className="pt-6 space-y-3">
         <div className="space-y-1.5"><Label>VIN list</Label>
-          <Textarea rows={10} value={text} onChange={e => setText(e.target.value)} placeholder="Paste one VIN per line" className="font-mono text-xs" />
+          <Textarea rows={10} value={text} onChange={e => setText(e.target.value)} placeholder="Paste VINs — full 17 chars, last 4, or last 5 digits" className="font-mono text-xs" />
         </div>
         <div className="flex gap-2 items-center">
           <Label className="text-sm">Direction</Label>
