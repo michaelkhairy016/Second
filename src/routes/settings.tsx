@@ -55,7 +55,7 @@ function ColorsTab() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from("standard_colors").select("*").order("sort_order");
+    const { data } = await supabase.from("standard_colors").select("id,code,name,active,sort_order").order("sort_order");
     setColors(data ?? []);
   }, []);
 
@@ -154,8 +154,8 @@ function ModelsTab() {
 
   const load = useCallback(async () => {
     const [{ data: m }, { data: t }] = await Promise.all([
-      supabase.from("models").select("*").order("name"),
-      supabase.from("model_trims").select("*").order("sort_order"),
+      supabase.from("models").select("id,name,active").order("name"),
+      supabase.from("model_trims").select("id,name,model_id,active,sort_order").order("sort_order"),
     ]);
     setModels((m ?? []).map(model => ({
       ...model,
@@ -318,7 +318,7 @@ function ReportsTab() {
 
   useEffect(() => {
     const load = async () => {
-      const { data } = await supabase.from("app_settings").select("*");
+      const { data } = await supabase.from("app_settings").select("id,key,value");
       const settings = data ?? [];
       const dt = settings.find(s => s.key === "delay_threshold");
       const rs = settings.find(s => s.key === "report_schedule");
@@ -488,8 +488,8 @@ function ProductionPlanTab() {
 
   const load = useCallback(async () => {
     const [mRes, pRes] = await Promise.all([
-      supabase.from("models").select("*").eq("active", true).order("name"),
-      supabase.from("production_plans").select("*").eq("month", selectedMonth + "-01"),
+      supabase.from("models").select("id,name,active").eq("active", true).order("name"),
+      supabase.from("production_plans").select("id,model_id,month,monthly_plan,daily_target,jph_target").eq("month", selectedMonth + "-01"),
     ]);
     setModels(mRes.data ?? []);
     setPlans(pRes.data ?? []);

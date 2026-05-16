@@ -83,7 +83,7 @@ function VehicleConditionSection({ vehicleId, station }: { vehicleId: string; st
   const loadIssues = async () => {
     const { data } = await supabase
       .from("issues")
-      .select("*")
+      .select("id,title,severity,status,created_at,resolved_at,resolved_by,reported_by,station")
       .eq("vehicle_id", vehicleId)
       .order("created_at", { ascending: false });
     setIssues((data as IssueRow[]) ?? []);
@@ -726,17 +726,11 @@ function ShortageStationView() {
     return () => { cancel = true; supabase.removeChannel(ch); };
   }, [picked]);
 
-  useEffect(() => {
-    const load = async () => {
-      const { data } = await supabase.from("vehicles").select("id, vin, vin_suffix").eq("current_station", "shortage").order("created_at", { ascending: true });
-      setStationVehicles(data ?? []);
-    };
-    load();
-    const ch = supabase.channel("shortage-station-vehicles")
-      .on("postgres_changes", { event: "*", schema: "public", table: "vehicles", filter: "current_station=eq.shortage" }, load)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, []);
+  const loadStationVehicles = async () => {
+    const { data } = await supabase.from("vehicles").select("id, vin, vin_suffix").eq("current_station", "shortage").order("created_at", { ascending: true });
+    setStationVehicles(data ?? []);
+  };
+  useEffect(() => { loadStationVehicles(); }, []);
 
   const resetScan = () => { setSuffix(""); setPicked(null); setMatches([]); setParts(""); setNotes(""); setPartType("ckd"); setResponsibility("supplier"); setReceivedBy(""); };
 
@@ -917,21 +911,15 @@ function ColorPicker({ color, setColor }: { color: string; setColor: (v: string)
 function PaintWaitingVehicles() {
   const [vehicles, setVehicles] = useState<Array<{ vin: string; vin_suffix: string; planned_color_id: string | null; id: string }>>([]);
 
-  useEffect(() => {
-    const load = async () => {
-      const { data } = await supabase
-        .from("vehicles")
-        .select("id, vin, vin_suffix, planned_color_id")
-        .eq("current_station", "paint")
-        .order("created_at", { ascending: true });
-      setVehicles(data ?? []);
-    };
-    load();
-    const ch = supabase.channel("paint-waiting")
-      .on("postgres_changes", { event: "*", schema: "public", table: "vehicles", filter: "current_station=eq.paint" }, load)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, []);
+  const load = async () => {
+    const { data } = await supabase
+      .from("vehicles")
+      .select("id, vin, vin_suffix, planned_color_id")
+      .eq("current_station", "paint")
+      .order("created_at", { ascending: true });
+    setVehicles(data ?? []);
+  };
+  useEffect(() => { load(); }, []);
 
   if (vehicles.length === 0) return null;
 

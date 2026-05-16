@@ -28,7 +28,7 @@ function CalendarPage() {
   const fetchCalendarData = async (start: Date, end: Date) => {
     const { data, error } = await supabase
       .from("factory_calendar")
-      .select("*")
+      .select("id,date,working_hours,is_working_day,notes")
       .gte("date", start.toISOString().split("T")[0])
       .lte("date", end.toISOString().split("T")[0]);
 

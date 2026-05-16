@@ -320,8 +320,8 @@ function FlowTab() {
     const [{ data: vs }, { data: ev }, { data: ai }, { data: ri }, { data: jos }] = await Promise.all([
       supabase.from("vehicles").select("id, vin, vin_suffix, current_station, lot_id, job_order_id, planned_color_id, actual_color_id, is_lot_tail, tail_note").is("completed_at", null),
       supabase.from("station_events").select("vehicle_id, station, recorded_at").eq("kind", "in").order("recorded_at", { ascending: false }),
-      supabase.from("issues").select("*").in("status", ["open", "in_progress"]),
-      supabase.from("issues").select("*").in("status", ["resolved", "closed"]),
+      supabase.from("issues").select("id,title,severity,status,created_at,resolved_at,vehicle_id,station").in("status", ["open", "in_progress"]).limit(200),
+      supabase.from("issues").select("id,title,severity,status,created_at,resolved_at,vehicle_id,station").in("status", ["resolved", "closed"]).limit(200),
       supabase.from("job_orders").select("id").eq("status", "active"),
     ]);
     const vehicles = vs ?? [];

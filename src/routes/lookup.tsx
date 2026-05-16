@@ -225,8 +225,8 @@ function ModelLookup() {
 
   useEffect(() => {
     Promise.all([
-      supabase.from("models").select("*").eq("active", true).order("name"),
-      supabase.from("model_trims").select("*").eq("active", true).order("sort_order"),
+      supabase.from("models").select("id,name,active").eq("active", true).order("name"),
+      supabase.from("model_trims").select("id,name,model_id,active,sort_order").eq("active", true).order("sort_order"),
     ]).then(([{ data: m }, { data: t }]) => {
       setModels(m ?? []);
       setTrims(t ?? []);

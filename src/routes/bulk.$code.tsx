@@ -69,44 +69,83 @@ function Page() {
       const tokens = text.split(/\s+|[,;]/).map(s => s.trim().toUpperCase()).filter(Boolean);
       if (tokens.length === 0) throw new Error("Paste at least one VIN or suffix");
 
-      // Collect all lot IDs for batch model lookup
+      // Classify tokens by length for batch lookups
+      const fullVins: string[] = [];
+      const fullVinVariants: string[] = [];
+      const suffixes5: string[] = [];
+      const suffixes4: string[] = [];
+      const tokenInfo: Array<{ raw: string; clean: string; kind: "full" | "suf5" | "suf4"; idx: number }> = [];
+
+      tokens.forEach((raw, idx) => {
+        const clean = stripVinStars(raw);
+        if (clean.length === 17 || clean.length === 19) {
+          fullVins.push(clean);
+          fullVinVariants.push(clean, `*${clean}*`);
+          tokenInfo.push({ raw, clean, kind: "full", idx });
+        } else if (clean.length === 5) {
+          suffixes5.push(clean);
+          tokenInfo.push({ raw, clean, kind: "suf5", idx });
+        } else {
+          suffixes4.push(clean.slice(-4));
+          tokenInfo.push({ raw, clean, kind: "suf4", idx });
+        }
+      });
+
+      // Batch queries — map vehicle id → {vin, current_station, lot_id}
+      const vehicleMap = new Map<string, { id: string; vin: string; current_station: string | null; lot_id: string | null }>();
+
+      if (fullVins.length > 0) {
+        const { data } = await supabase.from("vehicles").select("id,vin,current_station,lot_id").in("vin", fullVinVariants).is("completed_at", null);
+        (data ?? []).forEach(v => vehicleMap.set(v.id, v));
+        // Map each full VIN token to its vehicle
+      }
+      if (suffixes5.length > 0) {
+        const { data } = await supabase.from("vehicles").select("id,vin,current_station,lot_id").in("vin_suffix", suffixes5).is("completed_at", null);
+        (data ?? []).forEach(v => { if (!vehicleMap.has(v.id)) vehicleMap.set(v.id, v); });
+      }
+
+      // For full VINs: build lookup by vin value
+      const vinLookup = new Map<string, typeof vehicleMap extends Map<string, infer V> ? V : never>();
+      for (const v of vehicleMap.values()) {
+        vinLookup.set(v.vin, v);
+      }
+
+      // Build results in original token order
       const results: PendingVin[] = [];
       const lotIds = new Set<string>();
 
-      for (const raw of tokens) {
-        const clean = stripVinStars(raw);
-        const q = clean.length === 17 || clean.length === 19
-          ? supabase.from("vehicles").select("id, vin, current_station, lot_id").in("vin", [clean, `*${clean}*`]).is("completed_at", null).maybeSingle()
-          : supabase.from("vehicles").select("id, vin, current_station, lot_id").ilike("vin_suffix", `%${clean.slice(-4)}`).is("completed_at", null).limit(1).maybeSingle();
-        const { data } = await q;
+      for (const info of tokenInfo) {
+        let data: { id: string; vin: string; current_station: string | null; lot_id: string | null } | null = null;
+
+        if (info.kind === "full") {
+          data = vinLookup.get(info.clean) ?? vinLookup.get(`*${info.clean}*`) ?? null;
+        } else if (info.kind === "suf5") {
+          for (const v of vehicleMap.values()) {
+            if (v.vin?.slice(-5) === info.clean) { data = v; break; }
+          }
+        } else {
+          // 4-char suffix: individual ilike query (can't batch pattern matching)
+          const { data: d } = await supabase.from("vehicles").select("id,vin,current_station,lot_id").ilike("vin_suffix", `%${info.clean.slice(-4)}`).is("completed_at", null).limit(1).maybeSingle();
+          data = d;
+        }
+
         if (data) {
           lotIds.add(data.lot_id ?? "");
-          results.push({ raw, id: data.id, vin: data.vin, currentStation: data.current_station, model: "", found: true, editing: false });
+          results.push({ raw: info.raw, id: data.id, vin: data.vin, currentStation: data.current_station, model: "", found: true, editing: false });
         } else {
-          results.push({ raw, id: "", vin: "", currentStation: null, model: "", found: false, editing: false });
+          results.push({ raw: info.raw, id: "", vin: "", currentStation: null, model: "", found: false, editing: false });
         }
       }
 
-      // Batch fetch lot models
+      // Batch fetch lot models (single query)
       if (lotIds.size > 0 && !lotIds.has("")) {
         const { data: lots } = await supabase.from("lots").select("id, model").in("id", [...lotIds].filter(Boolean));
         const lotModelMap = new Map((lots ?? []).map(l => [l.id, l.model]));
-        // Also need to map vehicle lot_id to model
-        // Re-fetch with lot_id for mapping
-        const vehicleLotMap = new Map<string, string>();
+        // vehicleMap already has lot_id per vehicle — use it directly
         for (const r of results) {
           if (!r.found) continue;
-          const clean = stripVinStars(r.raw);
-          const q = clean.length === 17
-            ? supabase.from("vehicles").select("id, lot_id").eq("id", r.id).maybeSingle()
-            : supabase.from("vehicles").select("id, lot_id").eq("id", r.id).maybeSingle();
-          const { data } = await q;
-          if (data?.lot_id) vehicleLotMap.set(r.id, data.lot_id);
-        }
-        for (const r of results) {
-          if (!r.found) continue;
-          const lotId = vehicleLotMap.get(r.id);
-          if (lotId) r.model = lotModelMap.get(lotId) ?? "—";
+          const v = vehicleMap.get(r.id);
+          if (v?.lot_id) r.model = lotModelMap.get(v.lot_id) ?? "—";
         }
       }
 

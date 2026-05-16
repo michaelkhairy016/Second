@@ -15,7 +15,7 @@ export function useColors() {
   useEffect(() => {
     supabase
       .from("standard_colors")
-      .select("*")
+      .select("id,code,name,active,sort_order")
       .order("sort_order")
       .then(({ data }) => {
         if (data) setColors(new Map(data.map(c => [c.id, c])));

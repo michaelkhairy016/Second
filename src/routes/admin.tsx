@@ -35,10 +35,10 @@ function Page() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const reload = async () => {
     const [{ data: r }, { data: p }, { data: ro }, { data: as }] = await Promise.all([
-      supabase.from("station_access_requests").select("*").eq("status","pending").order("created_at"),
+      supabase.from("station_access_requests").select("id,user_id,station,status,created_at").eq("status","pending").order("created_at"),
       supabase.from("profiles").select("id, display_name"),
-      supabase.from("user_roles").select("*"),
-      supabase.from("station_assignments").select("*"),
+      supabase.from("user_roles").select("id,user_id,role"),
+      supabase.from("station_assignments").select("id,user_id,station"),
     ]);
     const profileMap = new Map((p ?? []).map(x => [x.id, x.display_name]));
     setReqs((r ?? []).map(req => ({ ...req, profile: { display_name: profileMap.get(req.user_id) ?? "User" } })));

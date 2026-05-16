@@ -22,7 +22,7 @@ function Page() {
   useEffect(() => {
     if (!user) return;
     const load = async () => {
-      const { data } = await supabase.from("station_access_requests").select("*").eq("user_id", user.id).order("created_at", { ascending: false });
+      const { data } = await supabase.from("station_access_requests").select("id,station,status,created_at").eq("user_id", user.id).order("created_at", { ascending: false });
       setReqs(data ?? []);
     };
     load();

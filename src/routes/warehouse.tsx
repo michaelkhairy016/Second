@@ -47,8 +47,8 @@ function Page() {
   const [editJob, setEditJob] = useState<JobOrder | null>(null);
 
   const handlePrint = async (job: JobOrder) => {
-    const { data: lot } = job.lot_id ? await supabase.from("lots").select("*").eq("id", job.lot_id).maybeSingle() : { data: null as Lot | null };
-    const { data: engines } = await supabase.from("engines").select("*").eq("job_order_id", job.id);
+    const { data: lot } = job.lot_id ? await supabase.from("lots").select("id,lot_code,chinese_number,model,total_units,producible_units,status,created_at").eq("id", job.lot_id).maybeSingle() : { data: null as Lot | null };
+    const { data: engines } = await supabase.from("engines").select("id,engine_number,engine_suffix,lot_id,job_order_id,status").eq("job_order_id", job.id);
     setPrintJob(job);
     setPrintLot(lot);
     setPrintEngines(engines ?? []);
@@ -74,12 +74,12 @@ function Page() {
 
   const reload = async () => {
     const [{ data: l }, { data: j }, { data: vc }, { data: m }, { data: t }, { data: s }] = await Promise.all([
-      supabase.from("lots").select("*").order("created_at", { ascending: false }),
-      supabase.from("job_orders").select("*").order("created_at", { ascending: false }),
-      supabase.from("vehicles").select("lot_id, job_order_id, current_station").is("completed_at", null),
-      supabase.from("models").select("*").eq("active", true).order("name"),
-      supabase.from("model_trims").select("*").eq("active", true).order("sort_order"),
-      supabase.from("app_settings").select("*").eq("key", "model_years").maybeSingle(),
+      supabase.from("lots").select("id,lot_code,chinese_number,model,total_units,producible_units,status,created_at").order("created_at", { ascending: false }),
+      supabase.from("job_orders").select("id,lot_id,job_code,units,color_plan,vin_sequence,status,model_year,is_contract,contract_company,created_at").order("created_at", { ascending: false }),
+      supabase.from("vehicles").select("lot_id, job_order_id, current_station").is("completed_at", null).limit(2000),
+      supabase.from("models").select("id,name,active").eq("active", true).order("name"),
+      supabase.from("model_trims").select("id,name,model_id,active,sort_order").eq("active", true).order("sort_order"),
+      supabase.from("app_settings").select("value").eq("key", "model_years").maybeSingle(),
     ]);
     setLots(l ?? []); setJobs(j ?? []); setModels(m ?? []); setTrims(t ?? []);
     if (s?.value && Array.isArray(s.value)) setModelYears(s.value as string[]);
