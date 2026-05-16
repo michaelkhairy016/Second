@@ -14,6 +14,7 @@ import { Route as StatusRouteImport } from './routes/status'
 import { Route as ShortagesRouteImport } from './routes/shortages'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as RestrictionsRouteImport } from './routes/restrictions'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as RequestsRouteImport } from './routes/requests'
 import { Route as LookupRouteImport } from './routes/lookup'
 import { Route as LoginRouteImport } from './routes/login'
@@ -50,6 +51,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const RestrictionsRoute = RestrictionsRouteImport.update({
   id: '/restrictions',
   path: '/restrictions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RequestsRoute = RequestsRouteImport.update({
@@ -124,6 +130,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/lookup': typeof LookupRoute
   '/requests': typeof RequestsRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/restrictions': typeof RestrictionsRoute
   '/settings': typeof SettingsRoute
   '/shortages': typeof ShortagesRoute
@@ -143,6 +150,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/lookup': typeof LookupRoute
   '/requests': typeof RequestsRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/restrictions': typeof RestrictionsRoute
   '/settings': typeof SettingsRoute
   '/shortages': typeof ShortagesRoute
@@ -163,6 +171,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/lookup': typeof LookupRoute
   '/requests': typeof RequestsRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/restrictions': typeof RestrictionsRoute
   '/settings': typeof SettingsRoute
   '/shortages': typeof ShortagesRoute
@@ -184,6 +193,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/lookup'
     | '/requests'
+    | '/reset-password'
     | '/restrictions'
     | '/settings'
     | '/shortages'
@@ -203,6 +213,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/lookup'
     | '/requests'
+    | '/reset-password'
     | '/restrictions'
     | '/settings'
     | '/shortages'
@@ -222,6 +233,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/lookup'
     | '/requests'
+    | '/reset-password'
     | '/restrictions'
     | '/settings'
     | '/shortages'
@@ -242,6 +254,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   LookupRoute: typeof LookupRoute
   RequestsRoute: typeof RequestsRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
   RestrictionsRoute: typeof RestrictionsRoute
   SettingsRoute: typeof SettingsRoute
   ShortagesRoute: typeof ShortagesRoute
@@ -286,6 +299,13 @@ declare module '@tanstack/react-router' {
       path: '/restrictions'
       fullPath: '/restrictions'
       preLoaderRoute: typeof RestrictionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/requests': {
@@ -386,6 +406,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   LookupRoute: LookupRoute,
   RequestsRoute: RequestsRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
   RestrictionsRoute: RestrictionsRoute,
   SettingsRoute: SettingsRoute,
   ShortagesRoute: ShortagesRoute,

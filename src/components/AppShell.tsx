@@ -59,11 +59,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const navLinks = (
     <>
-      {!isStatus && link("/", "Stations", LayoutGrid)}
+      {!(roles.length === 1 && isStatus) && link("/", "Stations", LayoutGrid)}
       {link("/flow", "Production Flow", GitBranch)}
       {link("/lookup", "Lookup", Search)}
-      {!isStatus && link("/requests", "My Requests", ClipboardList)}
-      {!isStatus && link("/issues", "Issues", AlertCircle)}
+      {!(roles.length === 1 && isStatus) && link("/requests", "My Requests", ClipboardList)}
+      {!(roles.length === 1 && isStatus) && link("/issues", "Issues", AlertCircle)}
       {(isSuperuser || isStaff) && link("/restrictions", "Restrictions", ShieldOff)}
       {isStatus && link("/status", "Status", Eye)}
       {(isSuperuser || isStaff) && link("/delayed", "Delayed", Clock)}
@@ -124,11 +124,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
         <nav className="md:hidden border-t flex overflow-x-auto px-2 gap-1 py-1.5">
-          {!isStatus && link("/", "Stations", LayoutGrid)}
+          {!(roles.length === 1 && isStatus) && link("/", "Stations", LayoutGrid)}
           {link("/flow", "Flow", GitBranch)}
           {link("/lookup", "Lookup", Search)}
-          {!isStatus && link("/requests", "Requests", ClipboardList)}
-          {!isStatus && link("/issues", "Issues", AlertCircle)}
+          {!(roles.length === 1 && isStatus) && link("/requests", "Requests", ClipboardList)}
+          {!(roles.length === 1 && isStatus) && link("/issues", "Issues", AlertCircle)}
           {(isSuperuser || isStaff) && link("/restrictions", "Restrictions", ShieldOff)}
           {isStatus && link("/status", "Status", Eye)}
           {(isSuperuser || isStaff) && link("/delayed", "Delayed", Clock)}

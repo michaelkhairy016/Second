@@ -26,6 +26,7 @@ const DIRECTION_CONSTRAINTS: Partial<Record<StationCode, "in" | "out" | "both">>
   repair: "both",
   cs: "both",
   pdi: "both",
+  line_feeding: "both",
 };
 
 interface PendingVin {

@@ -24,7 +24,7 @@ function Home() {
   const nav = useNavigate();
   const [requesting, setRequesting] = useState<string | null>(null);
 
-  useEffect(() => { if (isStatus) nav({ to: "/status" }); }, [isStatus, nav]);
+  useEffect(() => { if (isStatus && !isStaff && !isSuperuser) nav({ to: "/status" }); }, [isStatus, isStaff, isSuperuser, nav]);
 
   const [stats, setStats] = useState<{ total: number; inProduction: number; openShortages: number; openIssues: number } | null>(null);
   const [stationCounts, setStationCounts] = useState<Record<string, number>>({});
@@ -58,7 +58,7 @@ function Home() {
     setRequesting(station);
     const { error } = await supabase.from("station_access_requests").insert({
       user_id: (await supabase.auth.getUser()).data.user!.id,
-      station: station as "warehouse" | "wbs" | "paint" | "pbs" | "shortage" | "repair" | "cs" | "pdi" | "tcf" | "waiting_repair" | "tcf_offline" | "body_shop",
+      station: station as any,
     });
     setRequesting(null);
     if (error) toast.error(error.message); else toast.success("Request sent for approval");

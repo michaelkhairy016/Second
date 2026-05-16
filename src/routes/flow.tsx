@@ -12,8 +12,13 @@ export const Route = createFileRoute("/flow")({
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
 });
 
+type VehicleWithJoins = Vehicle & {
+  lots: { lot_code: string; model: string } | null;
+  job_orders: { model_year: string | null } | null;
+};
+
 function Page() {
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleWithJoins[]>([]);
   const [entryMap, setEntryMap] = useState<Record<string, string>>({});
   const [activeIssues, setActiveIssues] = useState<Record<string, Issue[]>>({});
   const [resolvedIssues, setResolvedIssues] = useState<Record<string, Issue[]>>({});
@@ -22,13 +27,13 @@ function Page() {
 
   const load = useCallback(async () => {
     const [{ data: vs }, { data: ev }, { data: ai }, { data: ri }, { data: jos }] = await Promise.all([
-      supabase.from("vehicles").select("id, vin, vin_suffix, current_station, lot_id, job_order_id, planned_color_id, actual_color_id, is_lot_tail, tail_note").is("completed_at", null),
+      supabase.from("vehicles").select("id, vin, vin_suffix, current_station, lot_id, job_order_id, planned_color_id, actual_color_id, is_lot_tail, tail_note, lots(lot_code, model), job_orders(model_year)").is("completed_at", null),
       supabase.from("station_events").select("vehicle_id, station, recorded_at").eq("kind", "in").order("recorded_at", { ascending: false }),
       supabase.from("issues").select("id,title,severity,status,created_at,resolved_at,vehicle_id,station").in("status", ["open", "in_progress"]),
       supabase.from("issues").select("id,title,severity,status,created_at,resolved_at,vehicle_id,station").in("status", ["resolved", "closed"]),
       supabase.from("job_orders").select("id").eq("status", "active"),
     ]);
-    const vehicles = vs ?? [];
+    const vehicles = (vs ?? []) as VehicleWithJoins[];
     setVehicles(vehicles);
     setActiveJobOrderIds(new Set((jos ?? []).map(j => j.id)));
 
@@ -88,11 +93,11 @@ function Page() {
     if (selectedStation === "line_feeding") {
       return vehicles
         .filter(v => v.current_station === "warehouse" && v.job_order_id && activeJobOrderIds.has(v.job_order_id))
-        .map(v => ({ ...v, activeIssues: activeIssues[v.id] ?? [], resolvedIssues: resolvedIssues[v.id] ?? [], enteredAt: entryMap[v.id] ?? null }));
+        .map(v => ({ ...v, activeIssues: activeIssues[v.id] ?? [], resolvedIssues: resolvedIssues[v.id] ?? [], enteredAt: entryMap[v.id] ?? null, lots: v.lots ?? null, job_orders: v.job_orders ?? null }));
     }
     return vehicles
       .filter(v => v.current_station === selectedStation)
-      .map(v => ({ ...v, activeIssues: activeIssues[v.id] ?? [], resolvedIssues: resolvedIssues[v.id] ?? [], enteredAt: entryMap[v.id] ?? null }));
+      .map(v => ({ ...v, activeIssues: activeIssues[v.id] ?? [], resolvedIssues: resolvedIssues[v.id] ?? [], enteredAt: entryMap[v.id] ?? null, lots: v.lots ?? null, job_orders: v.job_orders ?? null }));
   }, [selectedStation, vehicles, activeJobOrderIds, activeIssues, resolvedIssues, entryMap]);
 
   return (

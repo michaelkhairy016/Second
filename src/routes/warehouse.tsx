@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/EmptyState";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Boxes, ClipboardList, Loader2, Plus, Printer, FileSpreadsheet, Pencil, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Boxes, ClipboardList, Loader2, Plus, Printer, FileSpreadsheet, Pencil, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { exportToCSV } from "@/lib/export";
 import { stripVinStars } from "@/lib/vin";
@@ -38,7 +38,7 @@ function Page() {
   const [trims, setTrims] = useState<ModelTrim[]>([]);
   const [modelYears, setModelYears] = useState<string[]>(["2026", "2027"]);
   const [printJob, setPrintJob] = useState<JobOrder | null>(null);
-  const [printLot, setPrintLot] = useState<Lot | null>(null);
+  const [printLots, setPrintLots] = useState<{ lot: Lot; count: number }[]>([]);
   const [printEngines, setPrintEngines] = useState<Engine[]>([]);
   const [lotVehicleCounts, setLotVehicleCounts] = useState<Record<string, number>>({});
   const [canEditLots, setCanEditLots] = useState<Record<string, boolean>>({});
@@ -47,11 +47,21 @@ function Page() {
   const [editJob, setEditJob] = useState<JobOrder | null>(null);
 
   const handlePrint = async (job: JobOrder) => {
-    const { data: lot } = job.lot_id ? await supabase.from("lots").select("id,lot_code,chinese_number,model,total_units,producible_units,status,created_at").eq("id", job.lot_id).maybeSingle() : { data: null as Lot | null };
+    let resolvedLots: { lot: Lot; count: number }[] = [];
+    // Check if multi-lot
+    const { data: jol } = await supabase.from("job_order_lots")
+      .select("lot_id, vehicle_count, lots(id, lot_code, chinese_number, model, total_units, producible_units, status, created_at)")
+      .eq("job_order_id", job.id);
+    if (jol && jol.length > 0) {
+      resolvedLots = jol.map((j: any) => ({ lot: j.lots as Lot, count: j.vehicle_count }));
+    } else if (job.lot_id) {
+      const { data: lot } = await supabase.from("lots").select("id,lot_code,chinese_number,model,total_units,producible_units,status,created_at").eq("id", job.lot_id).maybeSingle();
+      if (lot) resolvedLots = [{ lot: lot as Lot, count: job.units }];
+    }
     const { data: engines } = await supabase.from("engines").select("id,engine_number,engine_suffix,lot_id,job_order_id,status").eq("job_order_id", job.id);
     setPrintJob(job);
-    setPrintLot(lot);
-    setPrintEngines(engines ?? []);
+    setPrintLots(resolvedLots);
+    setPrintEngines((engines ?? []) as Engine[]);
     setTimeout(() => window.print(), 150);
   };
 
@@ -72,16 +82,44 @@ function Page() {
     if (error) toast.error(error.message); else { toast.success("Lot deleted"); reload(); }
   };
 
+  const handleRelease = async (job: JobOrder) => {
+    if (!confirm(`Release job order ${job.job_code}? Vehicles will move to Line Feeding.`)) return;
+    const { data: vehicles } = await supabase.from("vehicles")
+      .select("id")
+      .eq("job_order_id", job.id)
+      .eq("current_station", "warehouse");
+    if (!vehicles || vehicles.length === 0) {
+      toast.error("No vehicles at warehouse to release");
+      return;
+    }
+    await supabase.from("job_orders")
+      .update({ released_at: new Date().toISOString() })
+      .eq("id", job.id);
+    await supabase.from("vehicles")
+      .update({ current_station: "line_feeding" })
+      .in("id", vehicles.map(v => v.id));
+    const user = (await supabase.auth.getUser()).data.user;
+    const events = vehicles.map(v => ({
+      vehicle_id: v.id,
+      station: "line_feeding" as const,
+      kind: "in" as const,
+      recorded_by: user?.id ?? null,
+    }));
+    await supabase.from("station_events").insert(events);
+    toast.success(`Released ${vehicles.length} vehicles to Line Feeding`);
+    reload();
+  };
+
   const reload = async () => {
     const [{ data: l }, { data: j }, { data: vc }, { data: m }, { data: t }, { data: s }] = await Promise.all([
       supabase.from("lots").select("id,lot_code,chinese_number,model,total_units,producible_units,status,created_at").order("created_at", { ascending: false }),
-      supabase.from("job_orders").select("id,lot_id,job_code,units,color_plan,vin_sequence,status,model_year,is_contract,contract_company,created_at").order("created_at", { ascending: false }),
+      supabase.from("job_orders").select("id,lot_id,job_code,units,color_plan,vin_sequence,status,model_year,is_contract,contract_company,released_at,created_at").order("created_at", { ascending: false }),
       supabase.from("vehicles").select("lot_id, job_order_id, current_station").is("completed_at", null).limit(2000),
       supabase.from("models").select("id,name,active").eq("active", true).order("name"),
       supabase.from("model_trims").select("id,name,model_id,active,sort_order").eq("active", true).order("sort_order"),
       supabase.from("app_settings").select("value").eq("key", "model_years").maybeSingle(),
     ]);
-    setLots(l ?? []); setJobs(j ?? []); setModels(m ?? []); setTrims(t ?? []);
+    setLots((l ?? []) as Lot[]); setJobs(j ?? []); setModels((m ?? []) as Model[]); setTrims((t ?? []) as ModelTrim[]);
     if (s?.value && Array.isArray(s.value)) setModelYears(s.value as string[]);
     const vehicles = (vc ?? []) as { lot_id: string | null; job_order_id: string | null; current_station: string | null }[];
     // Count vehicles per lot
@@ -138,10 +176,11 @@ function Page() {
         <p className="text-muted-foreground text-sm">Receive lots and split into job orders.</p>
       </div>
 
-      <div className="grid md:grid-cols-3 gap-4">
+      <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
         <NewLot models={models} trims={trims} onDone={reload} />
         <NewJobOrder lots={lots} modelYears={modelYears} onDone={reload} />
         <NewPaintJobOrder modelYears={modelYears} onDone={reload} />
+        <NewMultiLotJobOrder lots={lots} modelYears={modelYears} onDone={reload} />
       </div>
 
       <Card>
@@ -227,9 +266,11 @@ function Page() {
                   <div className="flex items-center gap-2">
                     <span><b>{j.job_code}</b> · {j.units} cars</span>
                     {(j as any).is_contract && <Badge variant="outline" className="text-xs">Contract: {(j as any).contract_company || "—"}</Badge>}
+                    {(j as any).released_at && <Badge variant="secondary" className="text-[10px]">Released</Badge>}
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground font-mono">{Object.entries(j.color_plan ?? {}).map(([k,v]) => `${getCode(k)}:${v}`).join(" ")}</span>
+                    {canEditJobs[j.id] && j.status === "active" && !(j as any).released_at && <Button variant="outline" size="sm" className="h-7 no-print" onClick={() => handleRelease(j)}><ArrowRight className="h-3.5 w-3.5 mr-1" />Release</Button>}
                     {canEditJobs[j.id] && <button onClick={() => setEditJob(j)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>}
                     {isSuperuser && <button onClick={() => handleDeleteJob(j)} className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>}
                     <Button variant="outline" size="sm" className="h-7 no-print" onClick={() => handlePrint(j)}><Printer className="h-3.5 w-3.5 mr-1" />Print</Button>
@@ -266,7 +307,7 @@ function Page() {
       }} onClose={() => setEditJob(null)} />}
 
       {/* Print area — hidden on screen, visible only when printing */}
-      {printJob && <JobOrderPrintView jobOrder={printJob} lot={printLot} engines={printEngines} colors={allColors} isContract={(printJob as any).is_contract} contractCompany={(printJob as any).contract_company} />}
+      {printJob && <JobOrderPrintView jobOrder={printJob} lots={printLots} engines={printEngines} colors={allColors} isContract={(printJob as any).is_contract} contractCompany={(printJob as any).contract_company} />}
     </div>
   );
 }
@@ -522,6 +563,182 @@ function NewPaintJobOrder({ modelYears, onDone }: { modelYears: string[]; onDone
           <div className="space-y-1.5"><Label>VINs (one per line, 17 or 19 chars)</Label><Textarea value={vins} onChange={e => setVins(e.target.value)} className="font-mono text-xs" rows={4} /></div>
           <Button disabled={busy} type="submit" className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Plus className="h-4 w-4 mr-1" /> Create Paint Job Order</>}</Button>
           <p className="text-xs text-muted-foreground">Contract vehicles arrive at WBS, get painted, then leave. No lot assignment needed.</p>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function NewMultiLotJobOrder({ lots, modelYears, onDone }: { lots: Lot[]; modelYears: string[]; onDone: () => void }) {
+  const { activeList } = useColors();
+  const activeLots = lots.filter(l => l.status === "active");
+  const [code, setCode] = useState("");
+  const [modelYear, setModelYear] = useState(modelYears[0] ?? "2026");
+  const [colorPlan, setColorPlan] = useState("11U:10\n55U:15");
+  const [lotRows, setLotRows] = useState<{ lotId: string; count: number; vins: string; engines: string }[]>([{ lotId: "", count: 10, vins: "", engines: "" }]);
+  const [busy, setBusy] = useState(false);
+
+  const totalUnits = lotRows.reduce((s, r) => s + r.count, 0);
+
+  const addLotRow = () => setLotRows(prev => [...prev, { lotId: "", count: 10, vins: "", engines: "" }]);
+  const removeLotRow = (idx: number) => {
+    if (lotRows.length <= 1) return;
+    setLotRows(prev => prev.filter((_, i) => i !== idx));
+  };
+  const updateLotRow = (idx: number, field: "lotId" | "count" | "vins" | "engines", value: string | number) => {
+    setLotRows(prev => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r));
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      // Validate at least 2 lots with valid lotId
+      const validRows = lotRows.filter(r => r.lotId);
+      if (validRows.length < 2) throw new Error("Select at least 2 lots for a multi-lot order");
+
+      // Parse color plan
+      const plan: Record<string, number> = {};
+      colorPlan.split("\n").map(s => s.trim()).filter(Boolean).forEach(line => {
+        const [k, v] = line.split(":").map(s => s.trim());
+        if (k && !isNaN(+v)) plan[k.toUpperCase()] = +v;
+      });
+      const planWithUuids: Record<string, number> = {};
+      for (const [code, qty] of Object.entries(plan)) {
+        const color = activeList.find(c => c.code === code);
+        if (color) planWithUuids[color.id] = qty;
+        else toast.warning(`Color code ${code} not found, skipping`);
+      }
+      if (Object.keys(planWithUuids).length === 0) throw new Error("No valid color codes found");
+
+      // Validate total VINs = sum of lot counts
+      const allVins: string[] = [];
+      const allEngines: string[] = [];
+      const lotVinMap: { lotId: string; vins: string[]; engines: string[]; count: number }[] = [];
+
+      for (const row of validRows) {
+        const vinList = row.vins.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length === 17 || s.length === 19);
+        if (vinList.length !== row.count) throw new Error(`Lot row has ${vinList.length} VINs but count is ${row.count}`);
+        allVins.push(...vinList);
+
+        const engineList = row.engines.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length >= 4);
+        allEngines.push(...engineList);
+
+        lotVinMap.push({ lotId: row.lotId, vins: vinList, engines: engineList, count: row.count });
+      }
+
+      if (allVins.length !== totalUnits) throw new Error(`Total VINs (${allVins.length}) must equal total units (${totalUnits})`);
+
+      // Check suffix collisions
+      const suffixes = allVins.map(v => v.slice(-5));
+      const { data: completed } = await supabase.from("vehicles").select("vin_suffix").not("completed_at", "is", null).in("vin_suffix", suffixes);
+      if (completed && completed.length > 0) {
+        const colliding = completed.map(c => c.vin_suffix).join(", ");
+        toast.warning(`VIN suffix collision with completed vehicles: ${colliding}. Proceeding anyway.`);
+      }
+
+      // Create job_order with lot_id: null (multi-lot)
+      const { data: jo, error } = await supabase.from("job_orders").insert({
+        lot_id: null,
+        job_code: code.trim(),
+        units: totalUnits,
+        color_plan: planWithUuids,
+        vin_sequence: allVins,
+        status: "active",
+        model_year: modelYear,
+      }).select().single();
+      if (error) throw error;
+
+      // Build flat plan for distributing colors
+      const planFlat: string[] = [];
+      Object.entries(planWithUuids).forEach(([uuid, n]) => { for (let i = 0; i < n; i++) planFlat.push(uuid); });
+      while (planFlat.length < totalUnits) planFlat.push(Object.keys(planWithUuids)[0]);
+
+      let vehicleOffset = 0;
+      for (const entry of lotVinMap) {
+        // Insert into job_order_lots
+        await supabase.from("job_order_lots").insert({
+          job_order_id: jo.id,
+          lot_id: entry.lotId,
+          vehicle_count: entry.count,
+        });
+
+        // Create vehicles with this lot_id
+        const rows = entry.vins.map((vin, i) => ({
+          vin,
+          vin_suffix: stripVinStars(vin).slice(-5),
+          lot_id: entry.lotId,
+          job_order_id: jo.id,
+          planned_color_id: planFlat[vehicleOffset + i] ?? null,
+          current_station: "warehouse" as const,
+        }));
+        const { error: ve } = await supabase.from("vehicles").insert(rows);
+        if (ve) throw ve;
+
+        // Create engines if provided
+        if (entry.engines.length > 0) {
+          const engineRows = entry.engines.map(en => ({
+            engine_number: en,
+            engine_suffix: en.slice(-4),
+            lot_id: entry.lotId,
+            job_order_id: jo.id,
+            status: "available" as const,
+          }));
+          const { error: ee } = await supabase.from("engines").insert(engineRows);
+          if (ee) throw ee;
+        }
+
+        vehicleOffset += entry.count;
+      }
+
+      toast.success(`Multi-lot job order + ${allVins.length} vehicles${allEngines.length > 0 ? ` + ${allEngines.length} engines` : ""} created`);
+      setCode(""); setColorPlan("11U:10\n55U:15");
+      setLotRows([{ lotId: "", count: 10, vins: "", engines: "" }]);
+      onDone();
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Card><CardHeader><CardTitle className="text-base">New Multi-Lot Job Order</CardTitle></CardHeader>
+      <CardContent>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="space-y-1.5"><Label>Job code</Label><Input value={code} onChange={e => setCode(e.target.value)} placeholder="ML-JO-001" required /></div>
+          {lotRows.map((row, idx) => (
+            <div key={idx} className="space-y-2 border rounded-md p-2 relative">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold">Lot #{idx + 1}</Label>
+                {lotRows.length > 1 && <button type="button" onClick={() => removeLotRow(idx)} className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><X className="h-3.5 w-3.5" /></button>}
+              </div>
+              <div className="flex gap-2">
+                <div className="flex-1 space-y-1">
+                  <Select value={row.lotId} onValueChange={v => updateLotRow(idx, "lotId", v)}>
+                    <SelectTrigger><SelectValue placeholder="Select lot..." /></SelectTrigger>
+                    <SelectContent>
+                      {activeLots.map(l => <SelectItem key={l.id} value={l.id}>{l.lot_code} — {l.model}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="w-20 space-y-1">
+                  <Input type="number" min={1} value={row.count} onChange={e => updateLotRow(idx, "count", +e.target.value)} placeholder="Count" />
+                </div>
+              </div>
+              <div className="space-y-1"><Label className="text-xs">VINs for this lot ({row.count} needed)</Label><Textarea value={row.vins} onChange={e => updateLotRow(idx, "vins", e.target.value)} className="font-mono text-xs" rows={3} placeholder="Paste VINs, one per line" /></div>
+              <div className="space-y-1"><Label className="text-xs">Engine numbers (optional)</Label><Textarea value={row.engines} onChange={e => updateLotRow(idx, "engines", e.target.value)} className="font-mono text-xs" rows={2} placeholder="Paste engine numbers" /></div>
+            </div>
+          ))}
+          <Button type="button" variant="outline" size="sm" onClick={addLotRow} className="w-full"><Plus className="h-3.5 w-3.5 mr-1" />Add another lot</Button>
+          <div className="text-xs text-muted-foreground">Total units: <b>{totalUnits}</b></div>
+          <div className="space-y-1.5"><Label>Model year</Label>
+            <Select value={modelYear} onValueChange={setModelYear}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {modelYears.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5"><Label>Color plan (CODE:count per line)</Label><Textarea value={colorPlan} onChange={e => setColorPlan(e.target.value)} className="font-mono text-xs" rows={3} /></div>
+          <Button disabled={busy} type="submit" className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create Multi-Lot Job Order"}</Button>
+          <p className="text-xs text-muted-foreground">Codes: {activeList.map(c => `${c.code}=${c.name}`).join(", ")}</p>
         </form>
       </CardContent>
     </Card>

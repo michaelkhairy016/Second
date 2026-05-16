@@ -16,7 +16,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { findBySuffix, stripVinStars } from "@/lib/vin";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, FileSpreadsheet, Plus, X, Package } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, ClipboardCheck, FileSpreadsheet, Plus, X, Package } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import type { StationEventWithVehicle, StationCode } from "@/lib/db-types";
 import { useColors } from "@/hooks/use-colors";
@@ -29,13 +29,13 @@ export const Route = createFileRoute("/station/$code")({
 function StationPage() {
   const { code } = Route.useParams();
   const station = stationByCode(code);
-  const { hasStation } = useAuth();
+  const { hasStation, isStaff, isSuperuser } = useAuth();
   const nav = useNavigate();
 
   useEffect(() => {
-    if (station && !hasStation(station.code)) { toast.error("You do not have access to this station"); nav({ to: "/" }); }
+    if (station && !hasStation(station.code) && !isStaff) { toast.error("You do not have access to this station"); nav({ to: "/" }); }
     if (station?.code === "warehouse") nav({ to: "/warehouse" });
-  }, [station, hasStation, nav]);
+  }, [station, hasStation, isStaff, nav]);
 
   if (!station || station.code === "warehouse") return null;
 
@@ -51,7 +51,7 @@ function StationPage() {
       </div>
 
       <ScanForm station={station.code} />
-      {["wbs", "body_shop"].includes(station.code) && <BulkPasteSection station={station.code as "wbs" | "body_shop"} />}
+      {(isStaff || isSuperuser) && <BulkPasteSection station={station.code as StationCode} />}
       {station.code === "pbs" && <PBSLotSummary />}
       {station.code === "paint" && <PaintWaitingVehicles />}
       {station.code !== "paint" && station.code !== "shortage" && <RecentEvents station={station.code} />}
@@ -550,12 +550,20 @@ function BulkPasteSection({ station }: { station: StationCode }) {
   const [text, setText] = useState("");
   const [kind, setKind] = useState<"in" | "out">("in");
   const [busy, setBusy] = useState(false);
+  const [matchedVins, setMatchedVins] = useState<string[]>([]);
   const [report, setReport] = useState<{ matched: number; missing: string[] } | null>(null);
   const stationLabel = stationByCode(station)?.label ?? station;
   const [showBulk, setShowBulk] = useState(false);
+  const [showPrint, setShowPrint] = useState(false);
+  const [shift, setShift] = useState<"day" | "night">("day");
+
+  const nextStationMap: Partial<Record<StationCode, StationCode>> = {
+    wbs: "paint", pbs: "tcf", tcf: "waiting_repair", waiting_repair: "repair", repair: "cs",
+    paint: "pbs",
+  };
 
   const run = async () => {
-    setBusy(true); setReport(null);
+    setBusy(true); setReport(null); setMatchedVins([]);
     try {
       const tokens = text.split(/\s+|[,;]/).map(s => s.trim().toUpperCase()).filter(Boolean);
       if (tokens.length === 0) throw new Error("Paste at least one VIN or suffix");
@@ -573,18 +581,33 @@ function BulkPasteSection({ station }: { station: StationCode }) {
       if (matched.length === 0) throw new Error("No vehicles found");
 
       const user = (await supabase.auth.getUser()).data.user;
-      const events = matched.map(m => ({ vehicle_id: m.id, station, kind, recorded_by: user?.id, source: "bulk" }));
+      const events = matched.map(m => ({
+        vehicle_id: m.id,
+        station,
+        kind,
+        recorded_by: user?.id,
+        source: "bulk",
+        ...(station === "paint" ? { meta: JSON.stringify({ shift }) } : {}),
+      }));
       const { error: ee } = await supabase.from("station_events").insert(events);
       if (ee) throw ee;
-      await supabase.from("vehicles").update({ current_station: station }).in("id", matched.map(m => m.id));
-      // Mark vehicles as completed when they exit PDI
+
+      const targetStation = (kind === "out" && nextStationMap[station]) ? nextStationMap[station]! : station;
+      await supabase.from("vehicles").update({ current_station: targetStation }).in("id", matched.map(m => m.id));
+
       if (kind === "out" && station === "pdi") {
         await supabase.from("vehicles").update({ completed_at: new Date().toISOString() }).in("id", matched.map(m => m.id));
       }
+
+      setMatchedVins(matched.map(m => m.vin));
       setReport({ matched: matched.length, missing });
       toast.success(`Updated ${matched.length} vehicles`);
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
+
+  if (showPrint && matchedVins.length > 0) {
+    return <VinPrintSheet vins={matchedVins} stationLabel={stationLabel} kind={kind} onClose={() => setShowPrint(false)} />;
+  }
 
   if (!showBulk) {
     return (
@@ -601,24 +624,111 @@ function BulkPasteSection({ station }: { station: StationCode }) {
     <Card>
       <CardHeader><CardTitle className="text-base flex items-center gap-2"><FileSpreadsheet className="h-4 w-4" />Bulk paste from Excel</CardTitle></CardHeader>
       <CardContent className="space-y-3">
-        <Textarea rows={8} value={text} onChange={e => setText(e.target.value)} placeholder="Paste one VIN per line — full VINs or suffixes" className="font-mono text-xs" />
+        <Textarea rows={8} value={text} onChange={e => setText(e.target.value)} placeholder="Paste one VIN per line — full VINs or last 4-5 digits" className="font-mono text-xs" />
         <div className="flex gap-2 items-center">
           <Label className="text-sm">Direction</Label>
           <select value={kind} onChange={e => setKind(e.target.value as "in" | "out")} className="border rounded-md px-2 py-1 text-sm bg-background">
             <option value="in">IN to {stationLabel}</option>
             <option value="out">OUT of {stationLabel}</option>
           </select>
+          {station === "paint" && (
+            <div className="flex gap-2 items-center">
+              <Label className="text-sm">Shift</Label>
+              <button
+                type="button"
+                onClick={() => setShift("day")}
+                className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${shift === "day" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300" : "bg-muted text-muted-foreground"}`}
+              >Day</button>
+              <button
+                type="button"
+                onClick={() => setShift("night")}
+                className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${shift === "night" ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300" : "bg-muted text-muted-foreground"}`}
+              >Night</button>
+            </div>
+          )}
           <Button className="ml-auto" disabled={busy} onClick={run}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply to all"}</Button>
         </div>
         {report && (
           <div className="text-sm space-y-1 pt-2 border-t">
             <div className="text-success">Matched: {report.matched}</div>
             {report.missing.length > 0 && <details><summary className="text-warning text-xs cursor-pointer">Not found: {report.missing.length}</summary><div className="font-mono text-xs mt-1">{report.missing.join("\n")}</div></details>}
+            {matchedVins.length > 0 && (
+              <Button variant="outline" size="sm" className="mt-2" onClick={() => setShowPrint(true)}>
+                <ClipboardCheck className="h-4 w-4 mr-1" /> Print VIN sheet
+              </Button>
+            )}
           </div>
         )}
-        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => { setShowBulk(false); setText(""); setReport(null); }}>Close</Button>
+        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => { setShowBulk(false); setText(""); setReport(null); setMatchedVins([]); }}>Close</Button>
       </CardContent>
     </Card>
+  );
+}
+
+const VINS_PER_PAGE = 45;
+const VINS_PER_COL = 15;
+
+function VinPrintSheet({ vins, stationLabel, kind, onClose }: { vins: string[]; stationLabel: string; kind: "in" | "out"; onClose: () => void }) {
+  const pages: string[][] = [];
+  for (let i = 0; i < vins.length; i += VINS_PER_PAGE) pages.push(vins.slice(i, i + VINS_PER_PAGE));
+  const date = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+
+  const column = (col: string[], offset: number) => (
+    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "8pt" }}>
+      <thead>
+        <tr style={{ borderBottom: "1.5px solid #000" }}>
+          <th style={{ padding: "2px", width: "14pt", fontSize: "7pt" }}>✓</th>
+          <th style={{ padding: "2px", width: "14pt", fontSize: "7pt" }}>#</th>
+          <th style={{ padding: "2px", textAlign: "left", fontSize: "7pt" }}>VIN</th>
+        </tr>
+      </thead>
+      <tbody>
+        {col.map((vin, i) => (
+          <tr key={i} style={{ borderBottom: "0.5px solid #ccc" }}>
+            <td style={{ padding: "1px 2px", textAlign: "center", fontSize: "10pt" }}>☐</td>
+            <td style={{ padding: "1px 2px", textAlign: "center", fontSize: "7pt" }}>{offset + i + 1}</td>
+            <td style={{ padding: "1px 2px", fontFamily: "monospace", fontSize: "7.5pt", whiteSpace: "nowrap" }}>{vin}</td>
+          </tr>
+        ))}
+        {Array.from({ length: VINS_PER_COL - col.length }).map((_, i) => (
+          <tr key={`empty-${i}`} style={{ borderBottom: "0.5px solid #eee" }}>
+            <td style={{ padding: "1px 2px", textAlign: "center", fontSize: "10pt" }}>☐</td>
+            <td style={{ padding: "1px 2px" }}></td>
+            <td style={{ padding: "1px 2px" }}></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  return (
+    <div>
+      <div className="no-print flex items-center gap-2 mb-2">
+        <Button variant="outline" size="sm" onClick={onClose}><ArrowLeft className="h-4 w-4 mr-1" /> Back</Button>
+        <Button size="sm" onClick={() => window.print()}>Print</Button>
+      </div>
+      <div className="print-area">
+        {pages.map((page, pi) => (
+          <div key={pi} className="print-page" style={{ minHeight: "100vh", padding: "0.8cm", boxSizing: "border-box" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1.5px solid #000", paddingBottom: "4px", marginBottom: "6px" }}>
+              <div>
+                <div style={{ fontSize: "11pt", fontWeight: 700 }}>{stationLabel} — {kind.toUpperCase()} Sheet</div>
+                <div style={{ fontSize: "8pt" }}>{date} | Total: {vins.length} | Page {pi + 1}/{pages.length}</div>
+              </div>
+              <div style={{ fontSize: "9pt", fontWeight: 700 }}>MPC</div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.4cm" }}>
+              {column(page.slice(0, VINS_PER_COL), pi * VINS_PER_PAGE)}
+              {column(page.slice(VINS_PER_COL, VINS_PER_COL * 2), pi * VINS_PER_PAGE + VINS_PER_COL)}
+              {column(page.slice(VINS_PER_COL * 2, VINS_PER_COL * 3), pi * VINS_PER_PAGE + VINS_PER_COL * 2)}
+            </div>
+            <div style={{ position: "absolute", bottom: "0.5cm", right: "0.8cm", fontSize: "7pt", color: "#999" }}>
+              {pi + 1} / {pages.length}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -909,6 +1019,7 @@ function ColorPicker({ color, setColor }: { color: string; setColor: (v: string)
 }
 
 function PaintWaitingVehicles() {
+  const { getCode } = useColors();
   const [vehicles, setVehicles] = useState<Array<{ vin: string; vin_suffix: string; planned_color_id: string | null; id: string }>>([]);
 
   const load = async () => {
@@ -931,7 +1042,7 @@ function PaintWaitingVehicles() {
           {vehicles.map(v => (
             <li key={v.id} className="py-2 flex justify-between font-mono text-xs">
               <span>…{v.vin.slice(-6)}</span>
-              <span className="text-muted-foreground">Plan: {v.planned_color_id ? "—" : "—"}</span>
+              <span className="text-muted-foreground">Plan: {getCode(v.planned_color_id)}</span>
             </li>
           ))}
         </ul>

@@ -4,11 +4,18 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { STATIONS } from "@/lib/stations";
 import { Link2, Clock } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
+import { useColors } from "@/hooks/use-colors";
 import type { Vehicle, Issue } from "@/lib/db-types";
 
 interface Props {
   stationKey: string;
-  vehicles: Array<Vehicle & { activeIssues: Issue[]; resolvedIssues: Issue[]; enteredAt: string | null }>;
+  vehicles: Array<Vehicle & {
+    activeIssues: Issue[];
+    resolvedIssues: Issue[];
+    enteredAt: string | null;
+    lots: { lot_code: string; model: string } | null;
+    job_orders: { model_year: string | null } | null;
+  }>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -19,6 +26,17 @@ const SEVERITY_VARIANT: Record<string, "default" | "secondary" | "destructive" |
   high: "destructive",
   critical: "destructive",
 };
+
+function ColorBadge({ colorId }: { colorId: string }) {
+  const { getCode, getName } = useColors();
+  const code = getCode(colorId);
+  const name = getName(colorId);
+  return (
+    <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground" title={name}>
+      {code}
+    </span>
+  );
+}
 
 export function StationDetailSheet({ stationKey, vehicles, open, onOpenChange }: Props) {
   const isVirtual = stationKey === "line_feeding";
@@ -47,10 +65,15 @@ export function StationDetailSheet({ stationKey, vehicles, open, onOpenChange }:
             <ul className="divide-y">
               {vehicles.map(v => (
                 <li key={v.id} className="py-3 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono font-semibold text-sm">{v.vin_suffix}</span>
-                    <span className="text-xs text-muted-foreground">{v.vin}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm">{v.lots?.lot_code ?? "—"}</span>
+                    <span className="text-xs text-muted-foreground">{v.lots?.model ?? "—"}</span>
                   </div>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    {v.job_orders?.model_year && <span>{v.job_orders.model_year}</span>}
+                    {v.planned_color_id && <ColorBadge colorId={v.planned_color_id} />}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground font-mono">{v.vin}</span>
                   {v.enteredAt && (
                     <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                       <Clock className="h-3 w-3" />

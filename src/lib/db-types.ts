@@ -25,6 +25,7 @@ export type FactorySnapshot = Tables<"factory_snapshots">;
 export type AppSetting = Tables<"app_settings">;
 export type ProductionPlan = Tables<"production_plans">;
 export type VehicleRestriction = Tables<"vehicle_restrictions">;
+export type JobOrderLot = Tables<"job_order_lots">;
 
 // Insert types
 export type VehicleInsert = TablesInsert<"vehicles">;
