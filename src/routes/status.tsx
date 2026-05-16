@@ -133,16 +133,12 @@ function DailyStatusTab() {
 
       const buildSections = (evts: any[]): ShopSection[] => {
         const stations = [
-          { code: "body_shop", label: "Body Shop" },
-          { code: "wbs", label: "WBS" },
+          { code: "body_shop", label: "Body" },
           { code: "paint", label: "Paint" },
-          { code: "shortage", label: "Shortage" },
-          { code: "tcf", label: "TCF" },
-          { code: "waiting_repair", label: "Waiting Repair" },
+          { code: "tcf", label: "T.C.F" },
           { code: "repair", label: "Repair" },
           { code: "cs", label: "C.S" },
           { code: "pdi", label: "PDI" },
-          { code: "tcf_offline", label: "TCF Offline" },
         ];
         return stations.map(st => {
           const stationEvts = evts.filter(e => e.station === st.code);
@@ -186,17 +182,19 @@ function DailyStatusTab() {
 
       // --- WIP per station per model ---
       const wipStations = [
-        { code: "warehouse", label: "Line Feeding" },
-        { code: "body_shop", label: "Body Shop" },
+        { code: "line_feeding", label: "Line Feeding" },
+        { code: "warehouse", label: "Warehouse" },
+        { code: "body_shop", label: "Body" },
         { code: "wbs", label: "WBS" },
         { code: "paint", label: "Paint" },
         { code: "pbs", label: "PBS" },
-        { code: "tcf", label: "TCF" },
-        { code: "waiting_repair", label: "Waiting Repair" },
+        { code: "tcf", label: "T.C.F" },
+        { code: "tcf_offline", label: "TCF Offline" },
         { code: "shortage", label: "Shortage" },
+        { code: "waiting_repair", label: "Waiting Repair" },
         { code: "repair", label: "Repair" },
         { code: "cs", label: "C.S" },
-        { code: "tcf_offline", label: "TCF Offline" },
+        { code: "pdi", label: "PDI" },
       ];
       const wipData = wipStations.map(st => {
         const row = empty();
@@ -445,8 +443,21 @@ function WIPTab() {
         }
       }
 
-      const wipStations = STATIONS.filter(s => s.code !== "warehouse" && s.code !== "pdi");
-      setRows(wipStations.map(s => {
+      const wipOrder = [
+        { code: "line_feeding", label: "Line Feeding" },
+        { code: "body_shop", label: "Body" },
+        { code: "wbs", label: "WBS" },
+        { code: "paint", label: "Paint" },
+        { code: "pbs", label: "PBS" },
+        { code: "tcf", label: "T.C.F" },
+        { code: "tcf_offline", label: "TCF Offline" },
+        { code: "shortage", label: "Shortage" },
+        { code: "waiting_repair", label: "Waiting Repair" },
+        { code: "repair", label: "Repair" },
+        { code: "cs", label: "C.S" },
+        { code: "pdi", label: "PDI" },
+      ];
+      setRows(wipOrder.map(s => {
         const stationVehicles = vs.filter(v => v.current_station === s.code);
         return {
           station: s.label,
