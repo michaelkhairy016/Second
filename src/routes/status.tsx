@@ -156,9 +156,26 @@ function DailyStatusTab() {
           });
           const rows: { label: string; data: ModelRow; total: number; highlight?: boolean }[] = [{ label: "IN", data: inRow, total: sum(inRow) }, { label: "Out", data: outRow, total: sum(outRow) }];
           if (st.code === "paint") {
-            const totalOut: ModelRow = {};
-            modelList.forEach(k => totalOut[k] = outRow[k] ?? 0);
-            rows.push({ label: "Total Out", data: totalOut, total: sum(totalOut), highlight: true });
+            // Shift-aware breakdown for paint
+            const dayIn: ModelRow = empty(), nightIn: ModelRow = empty(), dayOut: ModelRow = empty(), nightOut: ModelRow = empty();
+            stationEvts.forEach(e => {
+              const model = e.model;
+              if (!model) return;
+              const s = (e.meta as any)?.shift;
+              if (e.kind === "in" && s === "day") dayIn[model] = (dayIn[model] ?? 0) + 1;
+              else if (e.kind === "in" && s === "night") nightIn[model] = (nightIn[model] ?? 0) + 1;
+              else if (e.kind === "out" && s === "day") dayOut[model] = (dayOut[model] ?? 0) + 1;
+              else if (e.kind === "out" && s === "night") nightOut[model] = (nightOut[model] ?? 0) + 1;
+            });
+            rows.length = 0; // Replace default IN/OUT rows with shift breakdown
+            rows.push(
+              { label: "Day IN", data: dayIn, total: sum(dayIn) },
+              { label: "Night IN", data: nightIn, total: sum(nightIn) },
+              { label: "Day OUT", data: dayOut, total: sum(dayOut) },
+              { label: "Night OUT", data: nightOut, total: sum(nightOut) },
+              { label: "Total IN", data: inRow, total: sum(inRow), highlight: true },
+              { label: "Total OUT", data: outRow, total: sum(outRow), highlight: true },
+            );
           }
           return { name: st.label, rows };
         });

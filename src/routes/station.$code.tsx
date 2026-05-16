@@ -241,6 +241,7 @@ function ScanForm({ station }: { station: StationCode }) {
 
   const [lotShortageWarning, setLotShortageWarning] = useState<string | null>(null);
   const [issueText, setIssueText] = useState("");
+  const [shift, setShift] = useState<"day" | "night">("day");
 
   // Vehicle restrictions
   const [restrictions, setRestrictions] = useState<Array<{ id: string; restriction: string; stop_at_station: string; status: string }>>([]);
@@ -293,7 +294,7 @@ function ScanForm({ station }: { station: StationCode }) {
     if (station === "paint" && !color) return toast.error("Color required");
     setBusy(true);
     try {
-      // Paint station: special handling - no station_events, only update vehicle
+      // Paint station: color assignment + station_events with shift
       if (station === "paint") {
         // Paint warning: count actual color usages in same job_order
         if (picked.job_order_id && color) {
@@ -311,9 +312,20 @@ function ScanForm({ station }: { station: StationCode }) {
             }
           }
         }
-        // Only update vehicle, no station_events for paint
-        await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked.id);
-        toast.success(`Color assigned: ${picked.vin.slice(-5)}`);
+        // Update vehicle color
+        if (color) await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked.id);
+        // Create station_event with shift metadata
+        const user = (await supabase.auth.getUser()).data.user;
+        const { error } = await supabase.from("station_events").insert({
+          vehicle_id: picked.id, station, kind, color_used_id: color || null, recorded_by: user?.id, source: "manual",
+          meta: { shift },
+        });
+        if (error) throw error;
+        // For paint OUT, advance to PBS; for paint IN, keep at paint
+        if (kind === "out") {
+          await supabase.from("vehicles").update({ current_station: "pbs" }).eq("id", picked.id);
+        }
+        toast.success(`${kind.toUpperCase()} ${shift}: ${picked.vin.slice(-5)}`);
         setSuffix(""); setPicked(null); setColor("");
         setBusy(false);
         return;
@@ -446,9 +458,19 @@ function ScanForm({ station }: { station: StationCode }) {
 
         <div className="flex gap-2 pt-1">
           {station === "paint" ? (
-            <Button disabled={!picked || busy} className="w-full" onClick={() => submit("in")}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <>IN to {stationByCode(station)?.label ?? station}</>}
-            </Button>
+            <>
+              <div className="flex items-center gap-1.5 mr-2">
+                <Label className="text-xs whitespace-nowrap">Shift:</Label>
+                <button onClick={() => setShift("day")} className={`px-2.5 py-1 text-xs rounded-md border font-medium transition-colors ${shift === "day" ? "bg-amber-100 border-amber-400 text-amber-800" : "bg-muted border-muted text-muted-foreground"}`}>Day</button>
+                <button onClick={() => setShift("night")} className={`px-2.5 py-1 text-xs rounded-md border font-medium transition-colors ${shift === "night" ? "bg-indigo-100 border-indigo-400 text-indigo-800" : "bg-muted border-muted text-muted-foreground"}`}>Night</button>
+              </div>
+              <Button variant="outline" disabled={!picked || busy || !color} className="flex-1" onClick={() => submit("in")}>
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> IN ({shift})</>}
+              </Button>
+              <Button disabled={!picked || busy} className="flex-1" onClick={() => submit("out")}>
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <>OUT ({shift}) <ArrowRight className="h-4 w-4 ml-1" /></>}
+              </Button>
+            </>
           ) : (
             <>
               <Button variant="outline" disabled={!picked || busy} className="flex-1" onClick={() => submit("in")}>
