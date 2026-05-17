@@ -49,11 +49,11 @@ export function ProductionFlowDiagram({ counts, lineFeedingCount, onStationClick
   return (
     <div className="space-y-3">
       {/* Main production flow line */}
-      <div className="flex flex-wrap items-center justify-center gap-2 md:gap-3">
+      <div className="flex items-center gap-2 md:gap-3 overflow-x-auto pb-2">
         {mainSteps.map((step, i) => (
-          <div key={step.key} className="flex items-center gap-2 md:gap-3">
+          <div key={step.key} className="flex items-center gap-2 md:gap-3 shrink-0">
             <StationFlowCard step={step} />
-            {i < mainSteps.length - 1 && <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 hidden md:block" />}
+            {i < mainSteps.length - 1 && <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
           </div>
         ))}
       </div>

@@ -19,6 +19,10 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const body = await req.json().catch(() => ({}));
+    const reportDate = (body as any).date ?? new Date().toISOString().slice(0, 10);
+    const requestedModules = (body as any).modules ?? ["timely"];
+
     const env = Deno.env.toObject() as Env;
     const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -34,7 +38,6 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const reportDate = new Date().toISOString().slice(0, 10);
     const monthStart = reportDate.slice(0, 8) + "01";
 
     // Fetch data
@@ -147,6 +150,42 @@ Deno.serve(async (req: Request) => {
 
     const pdfBase64 = doc.output("datauristring").split(",")[1];
 
+    // Build attachments list
+    const attachments = [{ filename: `timely-report-${reportDate}.pdf`, content: pdfBase64 }];
+
+    // If dashboard modules requested, generate those PDFs too
+    if (requestedModules.length > 0 && requestedModules[0] !== "timely") {
+      const dashboardUrl = `${env.SUPABASE_URL}/functions/v1/dashboard-report`;
+      for (const mod of requestedModules) {
+        try {
+          const modRes = await fetch(dashboardUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` },
+            body: JSON.stringify({ date: reportDate, module: mod }),
+          });
+          if (modRes.ok) {
+            const modBuffer = await modRes.arrayBuffer();
+            const modBase64 = btoa(String.fromCharCode(...new Uint8Array(modBuffer)));
+            attachments.push({ filename: `${mod}-report-${reportDate}.pdf`, content: modBase64 });
+          }
+        } catch (e) { console.error(`Failed to generate ${mod} report:`, e); }
+      }
+    }
+
+    // Build summary HTML table
+    let summaryHtml = `<h2>Production Report — ${reportDate}</h2><p>See attached PDFs.</p>`;
+    summaryHtml += `<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse;font-family:sans-serif;font-size:12px">`;
+    summaryHtml += `<tr style="background:#2980b9;color:white"><th>Station</th>`;
+    models.forEach(m => { summaryHtml += `<th>${m}</th>`; });
+    summaryHtml += `<th>Total OUT</th></tr>`;
+    stations.forEach(st => {
+      const total = models.reduce((s, m) => s + (outsPerStationModel[st.code]?.[m] ?? 0), 0);
+      summaryHtml += `<tr><td>${st.label}</td>`;
+      models.forEach(m => { summaryHtml += `<td style="text-align:center">${outsPerStationModel[st.code]?.[m] ?? 0}</td>`; });
+      summaryHtml += `<td style="text-align:center;font-weight:bold">${total}</td></tr>`;
+    });
+    summaryHtml += `</table>`;
+
     // Send via Resend
     const sendRes = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -154,9 +193,9 @@ Deno.serve(async (req: Request) => {
       body: JSON.stringify({
         from: "AFA Shopfloor <reports@resend.dev>",
         to: emails,
-        subject: `Timely Production Report — ${reportDate}`,
-        html: `<h2>Timely Production Report</h2><p>Date: ${reportDate}</p><p>See attached PDF for the full production report.</p>`,
-        attachments: [{ filename: `timely-report-${reportDate}.pdf`, content: pdfBase64 }],
+        subject: `Production Report — ${reportDate}`,
+        html: summaryHtml,
+        attachments,
       }),
     });
 

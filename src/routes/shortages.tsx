@@ -18,6 +18,7 @@ import { exportToCSV } from "@/lib/export";
 import type { ShortageWithVehicle, VehicleSearchResult } from "@/lib/db-types";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { EmptyState } from "@/components/EmptyState";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export const Route = createFileRoute("/shortages")({
   head: () => ({ meta: [{ title: "Shortages — AFA Shopfloor" }] }),
@@ -141,6 +142,7 @@ function NewShortage({ onDone }: { onDone: () => void }) {
   const [notes, setNotes] = useState("");
   const [partType, setPartType] = useState<"ckd" | "local">("ckd");
   const [responsibility, setResponsibility] = useState<"afa" | "supplier">("supplier");
+  const [shortageReason, setShortageReason] = useState("ckd");
   const [receivedBy, setReceivedBy] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -160,7 +162,7 @@ function NewShortage({ onDone }: { onDone: () => void }) {
     const { error } = await supabase.from("shortages").insert({
       vehicle_id: picked.id, parts: partList, notes: notes || null,
       created_by: user?.id, part_type: partType, responsibility,
-      received_by: receivedBy || null,
+      received_by: receivedBy || null, shortage_reason: shortageReason,
     });
     await supabase.from("vehicles").update({ current_station: "shortage" }).eq("id", picked.id);
     setBusy(false);
@@ -188,20 +190,25 @@ function NewShortage({ onDone }: { onDone: () => void }) {
             <Label>Notes (optional)</Label>
             <Textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Additional details / تفاصيل إضافية" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Part type</Label>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setPartType("ckd")} className={`flex-1 py-2 rounded-md border text-sm font-medium ${partType === "ckd" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>CKD</button>
-                <button type="button" onClick={() => setPartType("local")} className={`flex-1 py-2 rounded-md border text-sm font-medium ${partType === "local" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>Local</button>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Responsibility</Label>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setResponsibility("afa")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "afa" ? "bg-warning/20 border-warning text-warning" : "bg-muted border-border"}`}>Against AFA</button>
-                <button type="button" onClick={() => setResponsibility("supplier")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "supplier" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>Against Supplier</button>
-              </div>
+          <div className="space-y-1.5">
+            <Label>Shortage Reason</Label>
+            <Select value={shortageReason} onValueChange={v => { setShortageReason(v); setPartType(v === "ckd" ? "ckd" : "local"); }}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ckd">CKD</SelectItem>
+                <SelectItem value="local">Local</SelectItem>
+                <SelectItem value="unavailable_factory">Unavailable in Factory</SelectItem>
+                <SelectItem value="missing_plastics">Missing (Plastics Paint Shop)</SelectItem>
+                <SelectItem value="missing_paint_miscolored">Missing (Paint Shop — Miscolored)</SelectItem>
+                <SelectItem value="general_missing">General Missing</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Responsibility</Label>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setResponsibility("afa")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "afa" ? "bg-warning/20 border-warning text-warning" : "bg-muted border-border"}`}>Against AFA</button>
+              <button type="button" onClick={() => setResponsibility("supplier")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "supplier" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>Against Supplier</button>
             </div>
           </div>
           <div className="space-y-1.5">

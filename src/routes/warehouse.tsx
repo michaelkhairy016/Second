@@ -85,7 +85,7 @@ function Page() {
   const handleRelease = async (job: JobOrder) => {
     if (!confirm(`Release job order ${job.job_code}? Vehicles will move to Line Feeding.`)) return;
     const { data: vehicles } = await supabase.from("vehicles")
-      .select("id")
+      .select("id, lot_id")
       .eq("job_order_id", job.id)
       .eq("current_station", "warehouse");
     if (!vehicles || vehicles.length === 0) {
@@ -106,6 +106,12 @@ function Page() {
       recorded_by: user?.id ?? null,
     }));
     await supabase.from("station_events").insert(events);
+    // Decrease producible_units per affected lot
+    const lotCounts: Record<string, number> = {};
+    vehicles.forEach(v => { if (v.lot_id) lotCounts[v.lot_id] = (lotCounts[v.lot_id] ?? 0) + 1; });
+    for (const [lotId, count] of Object.entries(lotCounts)) {
+      await supabase.rpc("decrease_producible", { lot_id_input: lotId, count_input: count });
+    }
     toast.success(`Released ${vehicles.length} vehicles to Line Feeding`);
     reload();
   };

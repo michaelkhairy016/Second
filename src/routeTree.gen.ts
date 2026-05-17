@@ -16,11 +16,13 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as RestrictionsRouteImport } from './routes/restrictions'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as RequestsRouteImport } from './routes/requests'
+import { Route as ManualEntryRouteImport } from './routes/manual-entry'
 import { Route as LookupRouteImport } from './routes/lookup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IssuesRouteImport } from './routes/issues'
 import { Route as FlowRouteImport } from './routes/flow'
 import { Route as DelayedRouteImport } from './routes/delayed'
+import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AdminRouteImport } from './routes/admin'
@@ -63,6 +65,11 @@ const RequestsRoute = RequestsRouteImport.update({
   path: '/requests',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ManualEntryRoute = ManualEntryRouteImport.update({
+  id: '/manual-entry',
+  path: '/manual-entry',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LookupRoute = LookupRouteImport.update({
   id: '/lookup',
   path: '/lookup',
@@ -86,6 +93,11 @@ const FlowRoute = FlowRouteImport.update({
 const DelayedRoute = DelayedRouteImport.update({
   id: '/delayed',
   path: '/delayed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CalendarRoute = CalendarRouteImport.update({
@@ -124,11 +136,13 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
   '/calendar': typeof CalendarRoute
+  '/dashboard': typeof DashboardRoute
   '/delayed': typeof DelayedRoute
   '/flow': typeof FlowRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
   '/lookup': typeof LookupRoute
+  '/manual-entry': typeof ManualEntryRoute
   '/requests': typeof RequestsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/restrictions': typeof RestrictionsRoute
@@ -144,11 +158,13 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
   '/calendar': typeof CalendarRoute
+  '/dashboard': typeof DashboardRoute
   '/delayed': typeof DelayedRoute
   '/flow': typeof FlowRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
   '/lookup': typeof LookupRoute
+  '/manual-entry': typeof ManualEntryRoute
   '/requests': typeof RequestsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/restrictions': typeof RestrictionsRoute
@@ -165,11 +181,13 @@ export interface FileRoutesById {
   '/admin': typeof AdminRoute
   '/analytics': typeof AnalyticsRoute
   '/calendar': typeof CalendarRoute
+  '/dashboard': typeof DashboardRoute
   '/delayed': typeof DelayedRoute
   '/flow': typeof FlowRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
   '/lookup': typeof LookupRoute
+  '/manual-entry': typeof ManualEntryRoute
   '/requests': typeof RequestsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/restrictions': typeof RestrictionsRoute
@@ -187,11 +205,13 @@ export interface FileRouteTypes {
     | '/admin'
     | '/analytics'
     | '/calendar'
+    | '/dashboard'
     | '/delayed'
     | '/flow'
     | '/issues'
     | '/login'
     | '/lookup'
+    | '/manual-entry'
     | '/requests'
     | '/reset-password'
     | '/restrictions'
@@ -207,11 +227,13 @@ export interface FileRouteTypes {
     | '/admin'
     | '/analytics'
     | '/calendar'
+    | '/dashboard'
     | '/delayed'
     | '/flow'
     | '/issues'
     | '/login'
     | '/lookup'
+    | '/manual-entry'
     | '/requests'
     | '/reset-password'
     | '/restrictions'
@@ -227,11 +249,13 @@ export interface FileRouteTypes {
     | '/admin'
     | '/analytics'
     | '/calendar'
+    | '/dashboard'
     | '/delayed'
     | '/flow'
     | '/issues'
     | '/login'
     | '/lookup'
+    | '/manual-entry'
     | '/requests'
     | '/reset-password'
     | '/restrictions'
@@ -248,11 +272,13 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
   AnalyticsRoute: typeof AnalyticsRoute
   CalendarRoute: typeof CalendarRoute
+  DashboardRoute: typeof DashboardRoute
   DelayedRoute: typeof DelayedRoute
   FlowRoute: typeof FlowRoute
   IssuesRoute: typeof IssuesRoute
   LoginRoute: typeof LoginRoute
   LookupRoute: typeof LookupRoute
+  ManualEntryRoute: typeof ManualEntryRoute
   RequestsRoute: typeof RequestsRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   RestrictionsRoute: typeof RestrictionsRoute
@@ -315,6 +341,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RequestsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/manual-entry': {
+      id: '/manual-entry'
+      path: '/manual-entry'
+      fullPath: '/manual-entry'
+      preLoaderRoute: typeof ManualEntryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/lookup': {
       id: '/lookup'
       path: '/lookup'
@@ -348,6 +381,13 @@ declare module '@tanstack/react-router' {
       path: '/delayed'
       fullPath: '/delayed'
       preLoaderRoute: typeof DelayedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/calendar': {
@@ -400,11 +440,13 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRoute,
   AnalyticsRoute: AnalyticsRoute,
   CalendarRoute: CalendarRoute,
+  DashboardRoute: DashboardRoute,
   DelayedRoute: DelayedRoute,
   FlowRoute: FlowRoute,
   IssuesRoute: IssuesRoute,
   LoginRoute: LoginRoute,
   LookupRoute: LookupRoute,
+  ManualEntryRoute: ManualEntryRoute,
   RequestsRoute: RequestsRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   RestrictionsRoute: RestrictionsRoute,

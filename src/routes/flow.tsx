@@ -84,15 +84,15 @@ function Page() {
   }, [vehicles]);
 
   const lineFeedingCount = useMemo(() =>
-    vehicles.filter(v => v.current_station === "warehouse" && v.job_order_id && activeJobOrderIds.has(v.job_order_id)).length,
-    [vehicles, activeJobOrderIds]
+    vehicles.filter(v => v.current_station === "line_feeding").length,
+    [vehicles]
   );
 
   const stationVehicles = useMemo(() => {
     if (!selectedStation) return [];
     if (selectedStation === "line_feeding") {
       return vehicles
-        .filter(v => v.current_station === "warehouse" && v.job_order_id && activeJobOrderIds.has(v.job_order_id))
+        .filter(v => v.current_station === "line_feeding")
         .map(v => ({ ...v, activeIssues: activeIssues[v.id] ?? [], resolvedIssues: resolvedIssues[v.id] ?? [], enteredAt: entryMap[v.id] ?? null, lots: v.lots ?? null, job_orders: v.job_orders ?? null }));
     }
     return vehicles

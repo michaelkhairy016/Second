@@ -2,9 +2,17 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useTheme } from "@/hooks/use-theme";
-import { LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Search, Menu, AlertCircle, Settings, GitBranch, Eye, Sun, Moon, CalendarDays, ShieldCheck, Clock, ShieldOff } from "lucide-react";
-import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
+import {
+  LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Search, AlertCircle,
+  Settings, GitBranch, Eye, Sun, Moon, CalendarDays, ShieldCheck, Clock,
+  ShieldOff, LayoutDashboard, PenTool, ChevronLeft, ChevronRight,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
+  SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
+  SidebarProvider, SidebarRail, SidebarSeparator, SidebarTrigger, useSidebar,
+} from "@/components/ui/sidebar";
 import type { ReactNode } from "react";
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -48,97 +56,99 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  const link = (to: string, label: string, Icon: React.ComponentType<{ className?: string }>) => {
-    const active = loc.pathname === to || (to !== "/" && loc.pathname.startsWith(to));
-    return (
-      <Link to={to} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors ${active ? "bg-accent text-accent-foreground font-medium" : "text-muted-foreground hover:bg-muted"}`}>
-        <Icon className="h-4 w-4" /> <span>{label}</span>
-      </Link>
-    );
-  };
-
-  const navLinks = (
-    <>
-      {!(roles.length === 1 && isStatus) && link("/", "Stations", LayoutGrid)}
-      {link("/flow", "Production Flow", GitBranch)}
-      {link("/lookup", "Lookup", Search)}
-      {!(roles.length === 1 && isStatus) && link("/requests", "My Requests", ClipboardList)}
-      {!(roles.length === 1 && isStatus) && link("/issues", "Issues", AlertCircle)}
-      {(isSuperuser || isStaff) && link("/restrictions", "Restrictions", ShieldOff)}
-      {isStatus && link("/status", "Status", Eye)}
-      {(isSuperuser || isStaff) && link("/delayed", "Delayed", Clock)}
-      {(isSuperuser || isStaff || isStatus) && link("/analytics", "Analytics", BarChart3)}
-      {isSuperuser && link("/admin", "Admin", Users)}
-      {isSuperuser && link("/settings", "Settings", Settings)}
-      {link("/calendar", "Calendar", CalendarDays)}
-    </>
-  );
+  const navItems = [
+    { to: "/", label: "Stations", icon: LayoutGrid, show: !(roles.length === 1 && isStatus) },
+    { to: "/flow", label: "Production Flow", icon: GitBranch, show: true },
+    { to: "/lookup", label: "Lookup", icon: Search, show: true },
+    { to: "/requests", label: "My Requests", icon: ClipboardList, show: !(roles.length === 1 && isStatus) },
+    { to: "/issues", label: "Issues", icon: AlertCircle, show: !(roles.length === 1 && isStatus) },
+    { to: "/restrictions", label: "Restrictions", icon: ShieldOff, show: isSuperuser || isStaff },
+    { to: "/status", label: "Status", icon: Eye, show: isStatus },
+    { to: "/delayed", label: "Delayed", icon: Clock, show: isSuperuser || isStaff },
+    { to: "/analytics", label: "Analytics", icon: BarChart3, show: isSuperuser || isStaff || isStatus },
+    { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, show: isSuperuser || isStaff || isStatus },
+    { to: "/manual-entry", label: "Manual Entry", icon: PenTool, show: isStaff || isSuperuser },
+    { to: "/admin", label: "Admin", icon: Users, show: isSuperuser },
+    { to: "/settings", label: "Settings", icon: Settings, show: isSuperuser },
+    { to: "/calendar", label: "Calendar", icon: CalendarDays, show: true },
+  ];
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
-      <header className="border-b border-white/[0.08] bg-black/60 backdrop-blur-md sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <Sheet>
-              <SheetTrigger asChild>
-                <button className="md:hidden p-2 rounded-md hover:bg-muted text-muted-foreground" aria-label="Menu">
-                  <Menu className="h-5 w-5" />
-                </button>
-              </SheetTrigger>
-              <SheetContent side="left" className="w-64">
-                <SheetTitle className="sr-only">Navigation</SheetTitle>
-                <div className="flex flex-col gap-1 mt-6">
-                  <div className="px-3 pb-3 mb-3 border-b">
-                    <div className="font-medium">{displayName ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground capitalize">{roles[0] ?? "no role"}</div>
-                  </div>
-                  {navLinks}
-                  <button
-                    onClick={async () => { await signOut(); nav({ to: "/login" }); }}
-                    className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-muted mt-4"
-                  >
-                    <LogOut className="h-4 w-4" /> Sign out
-                  </button>
-                </div>
-              </SheetContent>
-            </Sheet>
-            <Link to="/" className="flex items-center gap-2">
-              <img src="/logo.png" alt="AFA" className="h-6 w-auto brightness-0 invert opacity-70" />
-              <span className="font-semibold text-sm tracking-tight">AFA Shopfloor</span>
-            </Link>
-          </div>
-          <div className="hidden md:flex items-center gap-1">
-            {navLinks}
-          </div>
-          <div className="flex items-center gap-3 text-sm">
-            <div className="text-right hidden sm:block leading-tight">
-              <div className="font-medium">{displayName ?? "—"}</div>
-              <div className="text-xs text-muted-foreground capitalize">{roles[0] ?? "no role"}</div>
+    <SidebarProvider defaultOpen>
+      <Sidebar side="left" variant="sidebar" collapsible="icon">
+        <SidebarHeader className="border-b border-sidebar-border px-3 py-3">
+          <Link to="/" className="flex items-center gap-2">
+            <img src="/logo.png" alt="AFA" className="h-7 w-auto brightness-0 invert opacity-70 shrink-0" />
+            <span className="font-semibold text-sm tracking-tight group-data-[collapsible=icon]:hidden">AFA Shopfloor</span>
+          </Link>
+        </SidebarHeader>
+
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {navItems.filter(n => n.show).map(item => {
+                  const active = loc.pathname === item.to || (item.to !== "/" && loc.pathname.startsWith(item.to));
+                  return (
+                    <SidebarMenuItem key={item.to}>
+                      <SidebarMenuButton asChild isActive={active} tooltip={item.label}>
+                        <Link to={item.to}>
+                          <item.icon className="h-4 w-4" />
+                          <span>{item.label}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+
+        <SidebarFooter>
+          <SidebarSeparator />
+          <div className="flex flex-col gap-1">
+            <button
+              onClick={toggleTheme}
+              className="flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+            >
+              {theme === "dark" ? <Sun className="h-4 w-4 shrink-0" /> : <Moon className="h-4 w-4 shrink-0" />}
+              <span className="group-data-[collapsible=icon]:hidden">{theme === "dark" ? "Light mode" : "Dark mode"}</span>
+            </button>
+            <div className="px-2 py-1 group-data-[collapsible=icon]:hidden">
+              <div className="font-medium text-xs truncate">{displayName ?? "—"}</div>
+              <div className="text-[10px] text-sidebar-foreground/50 capitalize">{roles[0] ?? "no role"}</div>
             </div>
-            <button onClick={toggleTheme} className="p-2 rounded-md hover:bg-muted text-muted-foreground" aria-label="Toggle theme">
+            <button
+              onClick={async () => { await signOut(); nav({ to: "/login" }); }}
+              className="flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+            >
+              <LogOut className="h-4 w-4 shrink-0" />
+              <span className="group-data-[collapsible=icon]:hidden">Sign out</span>
+            </button>
+          </div>
+        </SidebarFooter>
+        <SidebarRail />
+      </Sidebar>
+
+      <SidebarInset>
+        <header className="sticky top-0 z-30 flex h-12 items-center gap-3 border-b bg-background/80 backdrop-blur-md px-4">
+          <SidebarTrigger />
+          <div className="md:hidden flex items-center gap-2">
+            <img src="/logo.png" alt="AFA" className="h-5 w-auto brightness-0 invert opacity-70" />
+            <span className="font-semibold text-xs tracking-tight">AFA Shopfloor</span>
+          </div>
+          <div className="ml-auto flex items-center gap-2 md:hidden">
+            <button onClick={toggleTheme} className="p-1.5 rounded-md hover:bg-muted text-muted-foreground">
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
-            <button onClick={async () => { await signOut(); nav({ to: "/login" }); }} className="p-2 rounded-md hover:bg-muted text-muted-foreground" aria-label="Sign out">
+            <button onClick={async () => { await signOut(); nav({ to: "/login" }); }} className="p-1.5 rounded-md hover:bg-muted text-muted-foreground">
               <LogOut className="h-4 w-4" />
             </button>
           </div>
-        </div>
-        <nav className="md:hidden border-t flex overflow-x-auto px-2 gap-1 py-1.5">
-          {!(roles.length === 1 && isStatus) && link("/", "Stations", LayoutGrid)}
-          {link("/flow", "Flow", GitBranch)}
-          {link("/lookup", "Lookup", Search)}
-          {!(roles.length === 1 && isStatus) && link("/requests", "Requests", ClipboardList)}
-          {!(roles.length === 1 && isStatus) && link("/issues", "Issues", AlertCircle)}
-          {(isSuperuser || isStaff) && link("/restrictions", "Restrictions", ShieldOff)}
-          {isStatus && link("/status", "Status", Eye)}
-          {(isSuperuser || isStaff) && link("/delayed", "Delayed", Clock)}
-          {(isSuperuser || isStaff || isStatus) && link("/analytics", "Analytics", BarChart3)}
-          {isSuperuser && link("/admin", "Admin", Users)}
-          {isSuperuser && link("/settings", "Settings", Settings)}
-          {link("/calendar", "Calendar", CalendarDays)}
-        </nav>
-      </header>
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-6">{children}</main>
-    </div>
+        </header>
+        <main className="flex-1 w-full max-w-7xl mx-auto px-4 py-6">{children}</main>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
