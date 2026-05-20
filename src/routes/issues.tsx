@@ -156,7 +156,7 @@ function Page() {
                       {issue.description && <p className="text-xs text-muted-foreground line-clamp-2">{issue.description}</p>}
                       <div className="flex items-center gap-3 text-xs text-muted-foreground">
                         <span>{stationByCode(issue.station)?.label ?? issue.station}</span>
-                        {issue.vehicle?.vin && <span className="font-mono">…{issue.vehicle.vin.slice(-6)}</span>}
+                        {issue.vehicle?.vin && <span className="font-mono text-xs">{issue.vehicle.vin}</span>}
                         {issue.reporter?.display_name && <span>by {issue.reporter.display_name}</span>}
                         <span>{new Date(issue.created_at).toLocaleDateString()}</span>
                       </div>
@@ -274,7 +274,7 @@ function NewIssueForm({ onDone }: { onDone: () => void }) {
             {matches.length > 0 && !picked && (
               <div className="border rounded-md divide-y">
                 {matches.map(m => (
-                  <button type="button" key={m.id} onClick={() => setPicked(m)} className="w-full text-left px-3 py-2 hover:bg-muted text-sm font-mono">…{m.vin.slice(-8)}</button>
+                  <button type="button" key={m.id} onClick={() => setPicked(m)} className="w-full text-left px-3 py-2 hover:bg-muted text-sm font-mono">{m.vin}</button>
                 ))}
               </div>
             )}

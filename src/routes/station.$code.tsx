@@ -16,9 +16,11 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { findBySuffix, stripVinStars } from "@/lib/vin";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, ClipboardCheck, FileSpreadsheet, Plus, X, Package } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, ClipboardCheck, FileSpreadsheet, Plus, X, Package, ClipboardPenLine } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import type { StationEventWithVehicle, StationCode } from "@/lib/db-types";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import type { StationEventWithVehicle, StationCode, VehicleSearchResult } from "@/lib/db-types";
 import { useColors } from "@/hooks/use-colors";
 
 export const Route = createFileRoute("/station/$code")({
@@ -31,6 +33,7 @@ function StationPage() {
   const station = stationByCode(code);
   const { hasStation, isStaff, isSuperuser } = useAuth();
   const nav = useNavigate();
+  const [autoPicked, setAutoPicked] = useState<VehicleSearchResult | null>(null);
 
   useEffect(() => {
     if (station && !hasStation(station.code) && !isStaff) { toast.error("You do not have access to this station"); nav({ to: "/" }); }
@@ -38,6 +41,8 @@ function StationPage() {
   }, [station, hasStation, isStaff, nav]);
 
   if (!station || station.code === "warehouse") return null;
+
+  const handlePickFromWip = (v: VehicleSearchResult) => setAutoPicked(v);
 
   return (
     <div className="space-y-4 max-w-xl mx-auto">
@@ -50,7 +55,8 @@ function StationPage() {
         </div>
       </div>
 
-      <ScanForm station={station.code} />
+      <StationWipSummary station={station.code} onPickVehicle={handlePickFromWip} />
+      <ScanForm station={station.code} autoPicked={autoPicked} onAutoPickedConsumed={() => setAutoPicked(null)} />
       {(isStaff || isSuperuser) && <BulkPasteSection station={station.code as StationCode} />}
       {station.code === "pbs" && <PBSLotSummary />}
       {station.code === "paint" && <PaintWaitingVehicles />}
@@ -230,7 +236,7 @@ function VehicleConditionSection({ vehicleId, station }: { vehicleId: string; st
   );
 }
 
-function ScanForm({ station }: { station: StationCode }) {
+function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: StationCode; autoPicked?: VehicleSearchResult | null; onAutoPickedConsumed?: () => void }) {
   const [suffix, setSuffix] = useState("");
   const debouncedSuffix = useDebouncedValue(suffix, 300);
   const [matches, setMatches] = useState<Awaited<ReturnType<typeof findBySuffix>>>([]);
@@ -241,6 +247,7 @@ function ScanForm({ station }: { station: StationCode }) {
 
   const [lotShortageWarning, setLotShortageWarning] = useState<string | null>(null);
   const [issueText, setIssueText] = useState("");
+  const [condition, setCondition] = useState<"ok" | "not_ok">("ok");
   const [shift, setShift] = useState<"day" | "night">("day");
 
   // Vehicle restrictions
@@ -287,7 +294,17 @@ function ScanForm({ station }: { station: StationCode }) {
     return () => { cancel = true; };
   }, [debouncedSuffix]);
 
-  useEffect(() => { setPicked(null); setColor(""); setLotShortageWarning(null); setRestrictions([]); setIssueText(""); }, [debouncedSuffix]);
+  useEffect(() => { setPicked(null); setColor(""); setLotShortageWarning(null); setRestrictions([]); setIssueText(""); setCondition("ok"); }, [debouncedSuffix]);
+
+  // Consume auto-picked vehicle from WIP summary
+  useEffect(() => {
+    if (autoPicked) {
+      setPicked(autoPicked as any);
+      setSuffix(autoPicked.vin_suffix);
+      setMatches([]);
+      onAutoPickedConsumed?.();
+    }
+  }, [autoPicked]);
 
   const submit = async (kind: "in" | "out") => {
     if (!picked) return toast.error("Pick a VIN first");
@@ -325,7 +342,7 @@ function ScanForm({ station }: { station: StationCode }) {
         if (kind === "out") {
           await supabase.from("vehicles").update({ current_station: "pbs" }).eq("id", picked.id);
         }
-        toast.success(`${kind.toUpperCase()} ${shift}: ${picked.vin.slice(-5)}`);
+        toast.success(`${kind.toUpperCase()} ${shift}: ${picked.vin}`);
         setSuffix(""); setPicked(null); setColor("");
         setBusy(false);
         return;
@@ -377,12 +394,16 @@ function ScanForm({ station }: { station: StationCode }) {
 
       if (picked.is_lot_tail) toast.warning(`⚠️ Lot-tail vehicle: ${picked.tail_note ?? "Flagged"}`);
       if (lotShortageWarning && kind === "out") toast.warning(`⚠️ Vehicle released despite lot shortages`);
-      toast.success(`Recorded: ${picked.vin.slice(-5)} ${kind.toUpperCase()}`);
+      toast.success(`Recorded: ${picked.vin} ${kind.toUpperCase()}`);
       setSuffix(""); setPicked(null); setColor(""); setIssueText("");
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
 
+  const { isStaff: isStaffLocal, isSuperuser: isSuperLocal } = useAuth();
   const needsColor = station === "paint";
+  const postPaintStations = ["paint", "pbs", "tcf", "repair", "cs", "pdi"];
+  const canAssignColor = postPaintStations.includes(station) && picked && !picked.actual_color_id && station !== "paint";
+  const canReassignColor = postPaintStations.includes(station) && picked?.actual_color_id && (isStaffLocal || isSuperLocal) && station !== "paint";
 
   return (
     <Card>
@@ -399,7 +420,7 @@ function ScanForm({ station }: { station: StationCode }) {
               .filter(m => station === "paint" ? m.current_station === "paint" : true)
               .map(m => (
               <button key={m.id} onClick={() => setPicked(m)} className="w-full text-left px-3 py-2 hover:bg-muted flex items-center justify-between text-sm">
-                <span className="font-mono">…{m.vin.slice(-8)}</span>
+                <span className="font-mono">{m.vin}</span>
                 <span className="text-xs text-muted-foreground">
                   {m.current_station ?? "—"}
                 </span>
@@ -445,14 +466,48 @@ function ScanForm({ station }: { station: StationCode }) {
           <ColorPicker color={color} setColor={setColor} />
         )}
 
-        {station !== "paint" && picked && (
+        {canAssignColor && (
+          <div className="border rounded-md p-3 space-y-1.5">
+            <Label className="text-sm font-medium flex items-center gap-1"><Package className="h-3 w-3" /> Assign Color</Label>
+            <ColorPicker color={color} setColor={setColor} />
+          </div>
+        )}
+
+        {canReassignColor && (
+          <div className="border rounded-md p-3 space-y-1.5">
+            <Label className="text-sm font-medium flex items-center gap-1"><AlertTriangle className="h-3 w-3 text-warning" /> Reassign Color (staff only)</Label>
+            <ColorPicker color={color} setColor={setColor} />
+            {color && color !== picked?.actual_color_id && (
+              <Button size="sm" variant="outline" disabled={busy} onClick={async () => {
+                setBusy(true);
+                await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked!.id);
+                toast.success("Color updated");
+                setBusy(false);
+                setColor("");
+              }}>Update Color</Button>
+            )}
+          </div>
+        )}
+
+        {station !== "paint" && station !== "shortage" && picked && (
           <VehicleConditionSection vehicleId={picked.id} station={station} />
         )}
 
-        {station !== "paint" && picked && (
-          <div className="space-y-1.5">
-            <Label htmlFor="issue-text">Issue (optional)</Label>
-            <Input id="issue-text" value={issueText} onChange={e => setIssueText(e.target.value)} placeholder="Describe issue or leave empty" onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit("in"); } }} />
+        {station !== "paint" && station !== "shortage" && picked && (
+          <div className="space-y-2 border rounded-md p-3">
+            <div className="space-y-1.5">
+              <Label>Condition</Label>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => { setCondition("ok"); setIssueText(""); }} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${condition === "ok" ? "bg-success/20 border-success text-success" : "bg-muted border-border"}`}>OK</button>
+                <button type="button" onClick={() => setCondition("not_ok")} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${condition === "not_ok" ? "bg-warning/20 border-warning text-warning" : "bg-muted border-border"}`}>Not OK</button>
+              </div>
+            </div>
+            {condition === "not_ok" && (
+              <div className="space-y-1.5">
+                <Label>Describe issue</Label>
+                <Input value={issueText} onChange={e => setIssueText(e.target.value)} placeholder="Describe the issue (English / العربية)" onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit("in"); } }} />
+              </div>
+            )}
           </div>
         )}
 
@@ -473,7 +528,7 @@ function ScanForm({ station }: { station: StationCode }) {
             </>
           ) : (
             <>
-              <Button variant="outline" disabled={!picked || busy} className="flex-1" onClick={() => submit("in")}>
+              <Button variant="outline" disabled={!picked || busy || (condition === "not_ok" && !issueText.trim())} className="flex-1" onClick={() => submit("in")}>
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> IN to {stationByCode(station)?.label ?? station}</>}
               </Button>
               <Button disabled={!picked || busy} className="flex-1" onClick={() => submit("out")}>
@@ -484,6 +539,228 @@ function ScanForm({ station }: { station: StationCode }) {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+interface WipVehicle {
+  id: string; vin: string; vin_suffix: string; current_station: string | null;
+  planned_color_id: string | null; actual_color_id: string | null;
+  lot_id: string | null; is_lot_tail: boolean; tail_note: string | null; job_order_id: string | null;
+  lot: { lot_code: string; model: string } | null;
+  hasOpenIssue: boolean;
+}
+
+function StationWipSummary({ station, onPickVehicle }: { station: StationCode; onPickVehicle: (v: VehicleSearchResult) => void }) {
+  const { isStaff, isSuperuser } = useAuth();
+  const [vehicles, setVehicles] = useState<WipVehicle[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogFilter, setDialogFilter] = useState<"all" | "ok" | "issue">("all");
+  const [dialogModel, setDialogModel] = useState<string | null>(null);
+  const { getCode } = useColors();
+
+  const load = async () => {
+    setLoading(true);
+    const [vRes, iRes] = await Promise.all([
+      supabase.from("vehicles").select("id, vin, vin_suffix, current_station, planned_color_id, actual_color_id, lot_id, is_lot_tail, tail_note, job_order_id, lot:lots(lot_code, model)").eq("current_station", station),
+      supabase.from("issues").select("vehicle_id").in("status", ["open", "in_progress"]),
+    ]);
+    const issueSet = new Set((iRes.data ?? []).map(i => i.vehicle_id));
+    const enriched: WipVehicle[] = (vRes.data ?? []).map((v: any) => ({ ...v, hasOpenIssue: issueSet.has(v.id) }));
+    setVehicles(enriched);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+    const ch = supabase.channel(`wip-${station}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "vehicles", filter: `current_station=eq.${station}` }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "issues" }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [station]);
+
+  if (loading) return <Card><CardContent className="py-4"><Skeleton className="h-20 w-full" /></CardContent></Card>;
+  if (vehicles.length === 0) return null;
+
+  const grouped = new Map<string, { ok: WipVehicle[]; issue: WipVehicle[] }>();
+  vehicles.forEach(v => {
+    const model = v.lot?.model ?? "Unknown";
+    if (!grouped.has(model)) grouped.set(model, { ok: [], issue: [] });
+    if (v.hasOpenIssue) grouped.get(model)!.issue.push(v); else grouped.get(model)!.ok.push(v);
+  });
+
+  const totalOk = vehicles.filter(v => !v.hasOpenIssue).length;
+  const totalIssue = vehicles.filter(v => v.hasOpenIssue).length;
+  const models = Array.from(grouped.entries()).sort((a, b) => (b[1].ok.length + b[1].issue.length) - (a[1].ok.length + a[1].issue.length));
+
+  const openDialog = (filter: "all" | "ok" | "issue", model: string | null) => {
+    setDialogFilter(filter);
+    setDialogModel(model);
+    setDialogOpen(true);
+  };
+
+  const getFilteredVehicles = () => {
+    let list = dialogModel ? (grouped.get(dialogModel)?.ok.concat(grouped.get(dialogModel)?.issue ?? []) ?? []) : vehicles;
+    if (dialogFilter === "ok") list = list.filter(v => !v.hasOpenIssue);
+    if (dialogFilter === "issue") list = list.filter(v => v.hasOpenIssue);
+    return list;
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-base">Station WIP ({vehicles.length})</CardTitle>
+        <StockCountButton vehicles={vehicles} getCode={getCode} />
+      </CardHeader>
+      <CardContent>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b text-muted-foreground text-xs">
+              <th className="text-left py-1.5 font-medium">Model</th>
+              <th className="text-center py-1.5 font-medium">OK</th>
+              <th className="text-center py-1.5 font-medium">Issue</th>
+              <th className="text-center py-1.5 font-medium">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {models.map(([model, data]) => (
+              <tr key={model} className="border-b last:border-0">
+                <td className="py-1.5 font-medium">{model}</td>
+                <td className="py-1.5 text-center">
+                  <button onClick={() => openDialog("ok", model)} className="text-success hover:underline font-semibold">{data.ok.length}</button>
+                </td>
+                <td className="py-1.5 text-center">
+                  <button onClick={() => data.issue.length > 0 && openDialog("issue", model)} className={`font-semibold ${data.issue.length > 0 ? "text-warning hover:underline" : "text-muted-foreground"}`}>{data.issue.length}</button>
+                </td>
+                <td className="py-1.5 text-center">
+                  <button onClick={() => openDialog("all", model)} className="font-semibold hover:underline">{data.ok.length + data.issue.length}</button>
+                </td>
+              </tr>
+            ))}
+            {models.length > 1 && (
+              <tr className="font-bold">
+                <td className="py-1.5">Total</td>
+                <td className="py-1.5 text-center">
+                  <button onClick={() => openDialog("ok", null)} className="text-success hover:underline">{totalOk}</button>
+                </td>
+                <td className="py-1.5 text-center">
+                  <button onClick={() => totalIssue > 0 && openDialog("issue", null)} className={`text-warning hover:underline`}>{totalIssue}</button>
+                </td>
+                <td className="py-1.5 text-center">
+                  <button onClick={() => openDialog("all", null)} className="hover:underline">{vehicles.length}</button>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </CardContent>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {dialogFilter === "ok" ? "OK" : dialogFilter === "issue" ? "Issue" : "All"} Vehicles
+              {dialogModel ? ` — ${dialogModel}` : ""}
+            </DialogTitle>
+          </DialogHeader>
+          <ul className="divide-y">
+            {getFilteredVehicles().map(v => (
+              <li key={v.id}>
+                <button onClick={() => { onPickVehicle(v as unknown as VehicleSearchResult); setDialogOpen(false); }}
+                  className="w-full text-left px-3 py-2 hover:bg-muted flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-mono text-xs">{v.vin}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {v.lot?.model ?? "—"} · {getCode(v.actual_color_id ?? v.planned_color_id) ?? "No color"}
+                    </div>
+                  </div>
+                  <Badge variant={v.hasOpenIssue ? "warning" : "success"} className="text-[10px] px-1.5 shrink-0">
+                    {v.hasOpenIssue ? "Issue" : "OK"}
+                  </Badge>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
+function StockCountButton({ vehicles, getCode }: { vehicles: WipVehicle[]; getCode: (id: string | null) => string }) {
+  const [open, setOpen] = useState(false);
+  const [checked, setChecked] = useState<Map<string, boolean>>(new Map());
+  const [verified, setVerified] = useState(false);
+
+  const handleVerify = () => setVerified(true);
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setChecked(new Map()); setVerified(false); } }}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" className="gap-1.5">
+          <ClipboardPenLine className="h-4 w-4" /> Stock Count
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Stock Count Verification ({vehicles.length} vehicles)</DialogTitle>
+        </DialogHeader>
+        {!verified ? (
+          <>
+            <ul className="divide-y">
+              {vehicles.map(v => (
+                <li key={v.id} className="flex items-center gap-3 px-3 py-2">
+                  <Checkbox
+                    checked={checked.get(v.id) ?? false}
+                    onCheckedChange={(c) => {
+                      const next = new Map(checked);
+                      next.set(v.id, !!c);
+                      setChecked(next);
+                    }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-mono text-xs">{v.vin}</div>
+                    <div className="text-xs text-muted-foreground">{v.lot?.model ?? "—"} · {getCode(v.actual_color_id ?? v.planned_color_id) ?? "No color"}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <Button className="w-full mt-3" onClick={handleVerify}>
+              Verify ({Array.from(checked.values()).filter(Boolean).length} / {vehicles.length} checked)
+            </Button>
+          </>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="rounded-md bg-success/10 border border-success/30 p-3">
+                <div className="text-2xl font-bold text-success">{Array.from(checked.values()).filter(Boolean).length}</div>
+                <div className="text-xs text-muted-foreground">Verified</div>
+              </div>
+              <div className="rounded-md bg-destructive/10 border border-destructive/30 p-3">
+                <div className="text-2xl font-bold text-destructive">{vehicles.length - Array.from(checked.values()).filter(Boolean).length}</div>
+                <div className="text-xs text-muted-foreground">Unchecked</div>
+              </div>
+              <div className="rounded-md bg-muted border p-3">
+                <div className="text-2xl font-bold">{vehicles.length}</div>
+                <div className="text-xs text-muted-foreground">Total</div>
+              </div>
+            </div>
+            {vehicles.filter(v => !checked.get(v.id)).length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-destructive mb-2">Unchecked vehicles (potentially missing):</p>
+                <ul className="divide-y border rounded-md">
+                  {vehicles.filter(v => !checked.get(v.id)).map(v => (
+                    <li key={v.id} className="px-3 py-1.5 text-xs font-mono">{v.vin} <span className="text-muted-foreground font-sans">— {v.lot?.model ?? "Unknown"}</span></li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <Button variant="outline" className="w-full" onClick={() => { setVerified(false); setChecked(new Map()); }}>Recount</Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -530,7 +807,7 @@ function RecentEvents({ station }: { station: StationCode }) {
                 <li key={r.id} className="py-2 flex items-center justify-between">
                   <div className="flex items-center gap-2 min-w-0">
                     <Badge variant={r.kind === "in" ? "info" : "success"}>{r.kind.toUpperCase()}</Badge>
-                    <span className="font-mono text-xs">…{r.vehicle?.vin?.slice(-6)}</span>
+                    <span className="font-mono text-xs">{r.vehicle?.vin ?? "—"}</span>
                     {r.color_used_id && <EventColorDisplay colorId={r.color_used_id} />}
                     {meta?.quality === "issue" && <Badge variant="warning" className="text-[10px] px-1">Issue</Badge>}
                     {meta?.condition && meta.condition !== "ok" && <Badge variant="warning" className="text-[10px] px-1">{meta.condition}</Badge>}
@@ -856,7 +1133,7 @@ function ShortageStationView() {
       const { error: ev } = await supabase.from("station_events").insert({ vehicle_id: picked.id, station: "shortage", kind: "in", recorded_by: user?.id, source: "manual" });
       if (ev) throw ev;
       await supabase.from("vehicles").update({ current_station: "shortage" } as any).eq("id", picked.id);
-      toast.success(`Shortage logged: ${picked.vin.slice(-5)}`);
+      toast.success(`Shortage logged: ${picked.vin}`);
       resetScan();
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
@@ -885,7 +1162,7 @@ function ShortageStationView() {
           <div className="space-y-1.5"><Label htmlFor="shortage-vin">Last 4–5 digits</Label><Input id="shortage-vin" autoFocus value={suffix} onChange={e => setSuffix(e.target.value)} placeholder="e.g. 12345" inputMode="numeric" className="text-lg font-mono tracking-widest" /></div>
           {matches.length > 0 && !picked && (
             <div className="border rounded-md divide-y">
-              {matches.map(m => (<button key={m.id} onClick={() => setPicked(m)} className="w-full text-left px-3 py-2 hover:bg-muted flex items-center justify-between text-sm"><span className="font-mono">…{m.vin.slice(-8)}</span><span className="text-xs text-muted-foreground">{m.current_station ?? "—"}</span></button>))}
+              {matches.map(m => (<button key={m.id} onClick={() => setPicked(m)} className="w-full text-left px-3 py-2 hover:bg-muted flex items-center justify-between text-sm"><span className="font-mono">{m.vin}</span><span className="text-xs text-muted-foreground">{m.current_station ?? "—"}</span></button>))}
             </div>
           )}
           {picked && (<div className="rounded-md border bg-muted/40 p-3 text-sm space-y-1"><div className="font-mono text-base">{picked.vin}</div><div className="text-xs text-muted-foreground">At <b>{picked.current_station ?? "—"}</b></div></div>)}
@@ -976,7 +1253,7 @@ function ShortageStationSummary({ vehicles }: { vehicles: Array<{ vin: string; v
     <Card>
       <CardHeader><CardTitle className="text-base">At Shortage Station ({vehicles.length})</CardTitle></CardHeader>
       <CardContent>
-        <ul className="divide-y text-sm">{vehicles.map(v => (<li key={v.id} className="py-2 flex items-center justify-between"><span className="font-mono text-xs">…{v.vin.slice(-6)}</span><Badge variant="secondary" className="text-[10px]">shortage</Badge></li>))}</ul>
+        <ul className="divide-y text-sm">{vehicles.map(v => (<li key={v.id} className="py-2 flex items-center justify-between"><span className="font-mono text-xs">{v.vin}</span><Badge variant="secondary" className="text-[10px]">shortage</Badge></li>))}</ul>
       </CardContent>
     </Card>
   );
@@ -1041,7 +1318,7 @@ function PaintWaitingVehicles() {
         <ul className="divide-y text-sm">
           {vehicles.map(v => (
             <li key={v.id} className="py-2 flex justify-between font-mono text-xs">
-              <span>…{v.vin.slice(-6)}</span>
+              <span>{v.vin}</span>
               <span className="text-muted-foreground">Plan: {getCode(v.planned_color_id)}</span>
             </li>
           ))}

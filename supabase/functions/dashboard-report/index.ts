@@ -111,7 +111,7 @@ Deno.serve(async (req: Request) => {
         startY: y,
         head: [["VIN", "Parts", "Reason", "Status", "Notes"]],
         body: shortages.map((s: any) => [
-          (s.vehicle as any)?.vin_suffix ?? "—",
+          (s.vehicle as any)?.vin ?? "—",
           (s.parts as string[]).join(", "),
           reasonLabels[s.shortage_reason] ?? s.shortage_reason ?? s.part_type ?? "—",
           s.status,

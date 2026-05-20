@@ -12,6 +12,9 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { CalendarDays } from "lucide-react";
 import { STATIONS, stationByCode } from "@/lib/stations";
 import { StatCard } from "@/components/StatCard";
 import { Search, AlertCircle, CheckCircle2, XCircle, FileSpreadsheet, Download, Clock } from "lucide-react";
@@ -80,6 +83,7 @@ interface ShopSection {
 
 function DailyStatusTab() {
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [calOpen, setCalOpen] = useState(false);
   const [monthStart] = useState(() => {
     const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d.toISOString();
   });
@@ -232,7 +236,22 @@ function DailyStatusTab() {
           <p className="text-xs text-muted-foreground">{selectedDate}{isToday ? " · Updated in real-time" : " · Historical view"}</p>
         </div>
         <div className="flex items-center gap-3">
-          <Input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} max={new Date().toISOString().slice(0, 10)} className="w-40" />
+          <Popover open={calOpen} onOpenChange={setCalOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-2 w-44 justify-start text-sm font-normal">
+                <CalendarDays className="h-4 w-4" />
+                {selectedDate}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="end">
+              <Calendar
+                mode="single"
+                selected={new Date(selectedDate + "T00:00:00")}
+                onSelect={d => { if (d) { setSelectedDate(d.toISOString().slice(0, 10)); setCalOpen(false); } }}
+                disabled={d => d > new Date()}
+              />
+            </PopoverContent>
+          </Popover>
           <StatCard label="MTD Hours" value={`${mtdWorkingHours}h`} />
           <StatCard label="Total WIP" value={totalWip} />
         </div>

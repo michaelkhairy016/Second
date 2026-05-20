@@ -84,7 +84,7 @@ function Page() {
                 <li key={s.id} className="py-3">
                   <div className="flex items-center justify-between">
                     <div className="text-sm">
-                      <div className="font-mono">…{s.vehicle?.vin?.slice(-6)}</div>
+                      <div className="font-mono">{s.vehicle?.vin ?? ""}</div>
                       <div className="text-xs text-muted-foreground mt-0.5">
                         {(s.parts as string[]).join(", ")}
                         {s.notes ? ` · ${s.notes}` : ""}

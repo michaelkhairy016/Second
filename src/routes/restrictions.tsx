@@ -223,7 +223,7 @@ function Page() {
                         onChange={() => toggleVehicle(v.id)}
                         className="rounded"
                       />
-                      <span className="font-mono">...{v.vin.slice(-6)}</span>
+                      <span className="font-mono">{v.vin}</span>
                     </label>
                   ))}
                 </div>
@@ -297,7 +297,7 @@ function Page() {
                         <li key={r.id} className="px-3 py-2.5 flex items-start justify-between gap-2">
                           <div className="min-w-0 text-sm">
                             <div className="font-mono text-xs">
-                              ...{r.vehicle?.vin?.slice(-6) ?? "—"}
+                              {r.vehicle?.vin ?? "—"}
                             </div>
                             <div className="flex items-center gap-1.5 mt-0.5">
                               <AlertTriangle className="h-3 w-3 text-destructive shrink-0" />
