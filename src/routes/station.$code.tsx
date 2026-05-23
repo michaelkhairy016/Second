@@ -620,7 +620,7 @@ function StationWipSummary({ station, onPickVehicle }: { station: StationCode; o
 
   const load = async () => {
     setLoading(true);
-    const stations = station === "paint" ? ["paint", "wbs", "line_feeding", "body_shop"] : [station];
+    const stations = [station];
     const [vRes, iRes] = await Promise.all([
       supabase.from("vehicles").select("id, vin, vin_suffix, current_station, planned_color_id, actual_color_id, lot_id, is_lot_tail, tail_note, job_order_id, lot:lots(lot_code, model)").in("current_station", stations),
       supabase.from("issues").select("vehicle_id").in("status", ["open", "in_progress"]),
@@ -1380,13 +1380,13 @@ function ColorPicker({ color, setColor }: { color: string; setColor: (v: string)
 
 function PaintWaitingVehicles() {
   const { getCode } = useColors();
-  const [vehicles, setVehicles] = useState<Array<{ vin: string; vin_suffix: string; planned_color_id: string | null; id: string; current_station: string | null }>>([]);
+  const [vehicles, setVehicles] = useState<Array<{ vin: string; vin_suffix: string; planned_color_id: string | null; id: string }>>([]);
 
   const load = async () => {
     const { data } = await supabase
       .from("vehicles")
-      .select("id, vin, vin_suffix, planned_color_id, current_station")
-      .in("current_station", ["paint", "wbs", "line_feeding", "body_shop"])
+      .select("id, vin, vin_suffix, planned_color_id")
+      .eq("current_station", "paint")
       .is("actual_color_id", null)
       .order("created_at", { ascending: true });
     setVehicles(data ?? []);
@@ -1414,10 +1414,7 @@ function PaintWaitingVehicles() {
           {vehicles.map(v => (
             <li key={v.id} className="py-2 flex justify-between font-mono text-xs">
               <span>{v.vin}</span>
-              <span className="text-muted-foreground flex items-center gap-2">
-                <Badge variant="outline" className="text-[10px] px-1 py-0">{stationByCode(v.current_station as StationCode)?.label ?? v.current_station}</Badge>
-                Plan: {getCode(v.planned_color_id)}
-              </span>
+              <span className="text-muted-foreground">Plan: {getCode(v.planned_color_id)}</span>
             </li>
           ))}
         </ul>
