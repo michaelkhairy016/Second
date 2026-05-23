@@ -563,7 +563,7 @@ function WIPTab() {
                 <TableBody>
                   {r.vins.map(v => (
                     <TableRow key={v.vin}>
-                      <TableCell className="font-mono text-xs">{v.vin.length > 10 ? `…${v.vin.slice(-8)}` : v.vin}</TableCell>
+                      <TableCell className="font-mono text-xs">{v.vin}</TableCell>
                       <TableCell className="text-xs">{getCode(v.planned_color_id)}</TableCell>
                       <TableCell className="text-xs">{getCode(v.actual_color_id)}</TableCell>
                       <TableCell className="text-xs">
@@ -725,7 +725,7 @@ function DelayedTab() {
                 <TableBody>
                   {vehicles.map(v => (
                     <TableRow key={v.vehicle_id} className={getRowClass(v.working_days_at_station)}>
-                      <TableCell className="font-mono text-xs">{v.vin_suffix}</TableCell>
+                      <TableCell className="font-mono text-xs">{v.vin}</TableCell>
                       <TableCell className="text-xs">
                         {stationByCode(v.current_station as StationCode)?.label ?? v.current_station}
                       </TableCell>

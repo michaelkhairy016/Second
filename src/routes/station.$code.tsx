@@ -324,6 +324,8 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
 
+  const postPaintStations = ["pbs", "tcf", "waiting_repair", "repair", "cs", "pdi"];
+
   const submit = async (kind: "in" | "out") => {
     if (!picked) return toast.error("Pick a VIN first");
     if (station === "paint" && !color && !picked.actual_color_id) return toast.error("Color required");
@@ -332,7 +334,6 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
       // Paint station: smart color assignment + pull/push logic
       if (station === "paint") {
         const prePaintStations = ["warehouse", "line_feeding", "body_shop", "wbs"];
-        const postPaintStations = ["pbs", "tcf", "waiting_repair", "repair", "cs", "pdi"];
         const vehicleStation = picked.current_station;
 
         // Color already assigned on vehicle — only assign if no actual_color_id
@@ -411,6 +412,11 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
 
       const user = (await supabase.auth.getUser()).data.user;
 
+      // Post-paint color assignment: save color if selected and vehicle has none
+      if (color && !picked.actual_color_id && postPaintStations.includes(station)) {
+        await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked.id);
+      }
+
       // Create issue if issueText provided
       if (issueText.trim()) {
         const { error: ie } = await supabase.from("issues").insert({
@@ -421,7 +427,7 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
       }
 
       const { error } = await supabase.from("station_events").insert({
-        vehicle_id: picked.id, station, kind, color_used_id: null, recorded_by: user?.id, source: "manual",
+        vehicle_id: picked.id, station, kind, color_used_id: color || null, recorded_by: user?.id, source: "manual",
         meta: null,
       });
       if (error) throw error;
@@ -447,7 +453,6 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
 
   const { isStaff: isStaffLocal, isSuperuser: isSuperLocal } = useAuth();
   const needsColor = station === "paint" && !picked?.actual_color_id;
-  const postPaintStations = ["paint", "pbs", "tcf", "repair", "cs", "pdi"];
   const canAssignColor = postPaintStations.includes(station) && picked && !picked.actual_color_id && station !== "paint";
   const canReassignColor = postPaintStations.includes(station) && picked?.actual_color_id && (isStaffLocal || isSuperLocal) && station !== "paint";
 
@@ -490,9 +495,6 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
           <div className="rounded-md border bg-muted/40 p-3 text-sm space-y-1">
             <div className="font-mono text-base">{picked.vin}</div>
             <VehicleColorDisplay vehicle={picked} />
-            {station === "paint" && picked.job_order_id && (
-              <ColorPlanTracking jobId={picked.job_order_id} selectedColorId={color} />
-            )}
             {lotCode && (
               <div className="flex items-center gap-1.5 text-xs mt-1">
                 <Badge variant="info">Lot: {lotCode}</Badge>
@@ -624,7 +626,24 @@ function StationWipSummary({ station, onPickVehicle }: { station: StationCode; o
       supabase.from("issues").select("vehicle_id").in("status", ["open", "in_progress"]),
     ]);
     const issueSet = new Set((iRes.data ?? []).map(i => i.vehicle_id));
-    const enriched: WipVehicle[] = (vRes.data ?? []).map((v: any) => ({ ...v, hasOpenIssue: issueSet.has(v.id) }));
+    const raw: any[] = vRes.data ?? [];
+
+    // Fallback model for multi-lot job orders (lot_id null but job_order_id set)
+    const needModel = raw.filter(v => !v.lot?.model && v.job_order_id);
+    if (needModel.length > 0) {
+      const joIds = [...new Set(needModel.map(v => v.job_order_id))];
+      const { data: jols } = await supabase.from("job_order_lots").select("job_order_id, lot_id").in("job_order_id", joIds);
+      const { data: lots } = await supabase.from("lots").select("id, model").in("id", [...new Set((jols ?? []).map((j: any) => j.lot_id))]);
+      const lotModel = new Map((lots ?? []).map((l: any) => [l.id, l.model]));
+      const joModel = new Map<string, string>();
+      (jols ?? []).forEach((j: any) => { if (!joModel.has(j.job_order_id) && lotModel.has(j.lot_id)) joModel.set(j.job_order_id, lotModel.get(j.lot_id)!); });
+      needModel.forEach(v => {
+        const model = joModel.get(v.job_order_id);
+        if (model) v.lot = { lot_code: "", model };
+      });
+    }
+
+    const enriched: WipVehicle[] = raw.map((v: any) => ({ ...v, hasOpenIssue: issueSet.has(v.id) }));
     setVehicles(enriched);
     setLoading(false);
   };
@@ -641,10 +660,11 @@ function StationWipSummary({ station, onPickVehicle }: { station: StationCode; o
   if (loading) return <Card><CardContent className="py-4"><Skeleton className="h-20 w-full" /></CardContent></Card>;
   if (vehicles.length === 0) return null;
 
-  const grouped = new Map<string, { ok: WipVehicle[]; issue: WipVehicle[] }>();
+  const grouped = new Map<string, { ok: WipVehicle[]; issue: WipVehicle[]; lotCodes: Set<string> }>();
   vehicles.forEach(v => {
     const model = v.lot?.model ?? "Unknown";
-    if (!grouped.has(model)) grouped.set(model, { ok: [], issue: [] });
+    if (!grouped.has(model)) grouped.set(model, { ok: [], issue: [], lotCodes: new Set() });
+    if (v.lot?.lot_code) grouped.get(model)!.lotCodes.add(v.lot.lot_code);
     if (v.hasOpenIssue) grouped.get(model)!.issue.push(v); else grouped.get(model)!.ok.push(v);
   });
 
@@ -684,7 +704,9 @@ function StationWipSummary({ station, onPickVehicle }: { station: StationCode; o
           <tbody>
             {models.map(([model, data]) => (
               <tr key={model} className="border-b last:border-0">
-                <td className="py-1.5 font-medium">{model}</td>
+                <td className="py-1.5 font-medium">{model}
+                  {data.lotCodes.size > 0 && <span className="text-xs text-muted-foreground ml-1">({Array.from(data.lotCodes).sort().join(" & ")})</span>}
+                </td>
                 <td className="py-1.5 text-center">
                   <button onClick={() => openDialog("ok", model)} className="text-success hover:underline font-semibold">{data.ok.length}</button>
                 </td>

@@ -177,7 +177,7 @@ function NewShortage({ onDone }: { onDone: () => void }) {
           {matches.length > 0 && !picked && (
             <div className="border rounded-md divide-y">
               {matches.map(m => (
-                <button type="button" key={m.id} onClick={() => setPicked(m)} className="w-full text-left px-3 py-2 hover:bg-muted text-sm font-mono">…{m.vin.slice(-8)}</button>
+                <button type="button" key={m.id} onClick={() => setPicked(m)} className="w-full text-left px-3 py-2 hover:bg-muted text-sm font-mono">{m.vin}</button>
               ))}
             </div>
           )}

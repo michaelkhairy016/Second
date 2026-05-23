@@ -34,6 +34,23 @@ function Page() {
       supabase.from("job_orders").select("id").eq("status", "active"),
     ]);
     const vehicles = (vs ?? []) as VehicleWithJoins[];
+
+    // Fallback model for multi-lot job orders (lot_id null but job_order_id set)
+    const needModel = vehicles.filter(v => !v.lots?.model && v.job_order_id);
+    if (needModel.length > 0) {
+      const joIds = [...new Set(needModel.map(v => v.job_order_id!).filter(Boolean))];
+      const { data: jols } = await supabase.from("job_order_lots").select("job_order_id, lot_id").in("job_order_id", joIds);
+      const lotIds = [...new Set((jols ?? []).map((j: any) => j.lot_id as string))];
+      const { data: lots } = await supabase.from("lots").select("id, lot_code, model").in("id", lotIds);
+      const lotModel = new Map((lots ?? []).map((l: any) => [l.id as string, l]));
+      const joModel = new Map<string, { lot_code: string; model: string }>();
+      (jols ?? []).forEach((j: any) => { if (!joModel.has(j.job_order_id) && lotModel.has(j.lot_id)) joModel.set(j.job_order_id, lotModel.get(j.lot_id)!); });
+      needModel.forEach(v => {
+        const lot = joModel.get(v.job_order_id!);
+        if (lot) v.lots = lot as any;
+      });
+    }
+
     setVehicles(vehicles);
     setActiveJobOrderIds(new Set((jos ?? []).map(j => j.id)));
 

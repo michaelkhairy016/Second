@@ -820,7 +820,7 @@ function EditJobDialog({ job, colors, modelYears, onSave, onClose }: {
   // Convert UUID color_plan back to CODE:count format
   const initialColorText = Object.entries((job.color_plan as Record<string, number>) ?? {}).map(([uuid, qty]) => {
     const c = activeList.find(cl => cl.id === uuid);
-    return c ? `${c.code}:${qty}` : `${uuid}:${qty}`;
+    return c ? `${c.code}:${qty}` : `?${qty}`;
   }).join("\n");
 
   const [code, setCode] = useState(job.job_code);

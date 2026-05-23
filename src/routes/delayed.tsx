@@ -190,7 +190,7 @@ function DelayedPage() {
                 <TableBody>
                   {vehicles.map(v => (
                     <TableRow key={v.vehicle_id} className={getRowClass(v.working_days_at_station)}>
-                      <TableCell className="font-mono text-xs">{v.vin_suffix}</TableCell>
+                      <TableCell className="font-mono text-xs">{v.vin}</TableCell>
                       <TableCell className="text-xs">
                         {stationByCode(v.current_station as StationCode)?.label ?? v.current_station}
                       </TableCell>

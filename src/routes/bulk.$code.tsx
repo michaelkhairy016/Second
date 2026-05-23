@@ -285,7 +285,7 @@ function Page() {
                     autoFocus
                   />
                 ) : (
-                  <span className="font-mono text-xs flex-1 truncate">{v.found ? v.vin.slice(-8) : v.raw}</span>
+                  <span className="font-mono text-xs flex-1 truncate">{v.found ? v.vin : v.raw}</span>
                 )}
                 {v.found && !v.editing && (
                   <>
