@@ -306,39 +306,85 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
     }
   }, [autoPicked]);
 
-  const submit = async (kind: "in" | "out") => {
-    if (!picked) return toast.error("Pick a VIN first");
-    if (station === "paint" && !color) return toast.error("Color required");
+  const createContractVehicle = async (model: string) => {
+    const s = stripVinStars(suffix.trim().toUpperCase());
+    if (s.length < 3) return toast.error("Enter at least 3 digits");
     setBusy(true);
     try {
-      // Paint station: color assignment + station_events with shift
+      const vin = `CONTRACT-${s}`;
+      const { data, error } = await supabase.from("vehicles").insert({
+        vin, vin_suffix: s.slice(-5), lot_id: null, job_order_id: null,
+        current_station: "wbs", planned_color_id: null, is_lot_tail: false,
+        tail_note: `${model} — Contract`,
+      }).select("id, vin, vin_suffix, planned_color_id, actual_color_id, current_station, lot_id, job_order_id, is_lot_tail, tail_note, completed_at").single();
+      if (error) throw error;
+      setPicked({ ...data, is_archived: false });
+      setMatches([]);
+      toast.success(`Created: ${model} — ${s}`);
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+
+  const submit = async (kind: "in" | "out") => {
+    if (!picked) return toast.error("Pick a VIN first");
+    if (station === "paint" && !color && !picked.actual_color_id) return toast.error("Color required");
+    setBusy(true);
+    try {
+      // Paint station: smart color assignment + pull/push logic
       if (station === "paint") {
-        // Paint warning: count actual color usages in same job_order
-        if (picked.job_order_id && color) {
-          const { data: jo } = await supabase.from("job_orders").select("color_plan").eq("id", picked.job_order_id).maybeSingle();
-          const plan = (jo?.color_plan as Record<string, number>) ?? {};
-          const limit = plan[color];
-          if (typeof limit === "number") {
-            const { count } = await supabase.from("vehicles").select("id", { count: "exact", head: true })
-              .eq("job_order_id", picked.job_order_id).eq("actual_color_id", color);
-            if ((count ?? 0) >= limit) {
-              const colorMap = await loadColorMap();
-              const colorName = colorMap.get(color)?.name ?? color;
-              const ok = window.confirm(`Color ${colorName} already used ${count}/${limit} for this job. Override and continue?`);
-              if (!ok) { setBusy(false); return; }
+        const prePaintStations = ["warehouse", "line_feeding", "body_shop", "wbs"];
+        const postPaintStations = ["pbs", "tcf", "waiting_repair", "repair", "cs", "pdi"];
+        const vehicleStation = picked.current_station;
+
+        // Color already assigned on vehicle — only assign if no actual_color_id
+        if (!picked.actual_color_id && color) {
+          // Color plan limit check
+          if (picked.job_order_id) {
+            const { data: jo } = await supabase.from("job_orders").select("color_plan").eq("id", picked.job_order_id).maybeSingle();
+            const plan = (jo?.color_plan as Record<string, number>) ?? {};
+            const limit = plan[color];
+            if (typeof limit === "number") {
+              const { count } = await supabase.from("vehicles").select("id", { count: "exact", head: true })
+                .eq("job_order_id", picked.job_order_id).eq("actual_color_id", color);
+              if ((count ?? 0) >= limit) {
+                const colorMap = await loadColorMap();
+                const colorName = colorMap.get(color)?.name ?? color;
+                const ok = window.confirm(`Color ${colorName} already used ${count}/${limit} for this job. Override and continue?`);
+                if (!ok) { setBusy(false); return; }
+              }
             }
           }
+          await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked.id);
         }
-        // Update vehicle color
-        if (color) await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked.id);
-        // Create station_event with shift metadata
+
         const user = (await supabase.auth.getUser()).data.user;
+
+        // Pre-paint: assign color + pull to paint
+        if (vehicleStation && prePaintStations.includes(vehicleStation)) {
+          await supabase.from("station_events").insert({
+            vehicle_id: picked.id, station: "paint", kind: "in", color_used_id: color || null, recorded_by: user?.id, source: "manual",
+            meta: { shift },
+          });
+          await supabase.from("vehicles").update({ current_station: "paint" }).eq("id", picked.id);
+          toast.success(`Color assigned + pulled to paint: ${picked.vin}`);
+          setSuffix(""); setPicked(null); setColor("");
+          setBusy(false);
+          return;
+        }
+
+        // Post-paint: just assign color if missing, don't move
+        if (vehicleStation && postPaintStations.includes(vehicleStation)) {
+          toast.success(`Color assigned: ${picked.vin} (stays at ${vehicleStation})`);
+          setSuffix(""); setPicked(null); setColor("");
+          setBusy(false);
+          return;
+        }
+
+        // At paint: normal IN/OUT flow
         const { error } = await supabase.from("station_events").insert({
           vehicle_id: picked.id, station, kind, color_used_id: color || null, recorded_by: user?.id, source: "manual",
           meta: { shift },
         });
         if (error) throw error;
-        // For paint OUT, advance to PBS; for paint IN, keep at paint
         if (kind === "out") {
           await supabase.from("vehicles").update({ current_station: "pbs" }).eq("id", picked.id);
         }
@@ -400,7 +446,7 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
   };
 
   const { isStaff: isStaffLocal, isSuperuser: isSuperLocal } = useAuth();
-  const needsColor = station === "paint";
+  const needsColor = station === "paint" && !picked?.actual_color_id;
   const postPaintStations = ["paint", "pbs", "tcf", "repair", "cs", "pdi"];
   const canAssignColor = postPaintStations.includes(station) && picked && !picked.actual_color_id && station !== "paint";
   const canReassignColor = postPaintStations.includes(station) && picked?.actual_color_id && (isStaffLocal || isSuperLocal) && station !== "paint";
@@ -416,9 +462,7 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
 
         {matches.length > 0 && !picked && (
           <div className="border rounded-md divide-y">
-            {matches
-              .filter(m => station === "paint" ? m.current_station === "paint" : true)
-              .map(m => (
+            {matches.map(m => (
               <button key={m.id} onClick={() => setPicked(m)} className="w-full text-left px-3 py-2 hover:bg-muted flex items-center justify-between text-sm">
                 <span className="font-mono">{m.vin}</span>
                 <span className="text-xs text-muted-foreground">
@@ -426,6 +470,19 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
                 </span>
               </button>
             ))}
+          </div>
+        )}
+
+        {matches.length === 0 && debouncedSuffix.trim().length >= 3 && !picked && (station === "wbs" || station === "paint") && (
+          <div className="border rounded-lg p-3 space-y-2">
+            <p className="text-sm text-muted-foreground">No vehicle found. Create contract vehicle?</p>
+            <div className="flex gap-2 flex-wrap">
+              {(["Proton MC2", "Zemex", "Quik 300"] as const).map(model => (
+                <Button key={model} variant="outline" size="sm" disabled={busy} onClick={() => createContractVehicle(model)}>
+                  {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : model}
+                </Button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -561,8 +618,9 @@ function StationWipSummary({ station, onPickVehicle }: { station: StationCode; o
 
   const load = async () => {
     setLoading(true);
+    const stations = station === "paint" ? ["paint", "wbs", "line_feeding", "body_shop"] : [station];
     const [vRes, iRes] = await Promise.all([
-      supabase.from("vehicles").select("id, vin, vin_suffix, current_station, planned_color_id, actual_color_id, lot_id, is_lot_tail, tail_note, job_order_id, lot:lots(lot_code, model)").eq("current_station", station),
+      supabase.from("vehicles").select("id, vin, vin_suffix, current_station, planned_color_id, actual_color_id, lot_id, is_lot_tail, tail_note, job_order_id, lot:lots(lot_code, model)").in("current_station", stations),
       supabase.from("issues").select("vehicle_id").in("status", ["open", "in_progress"]),
     ]);
     const issueSet = new Set((iRes.data ?? []).map(i => i.vehicle_id));
@@ -574,7 +632,7 @@ function StationWipSummary({ station, onPickVehicle }: { station: StationCode; o
   useEffect(() => {
     load();
     const ch = supabase.channel(`wip-${station}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "vehicles", filter: `current_station=eq.${station}` }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "vehicles" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "issues" }, load)
       .subscribe();
     return () => { supabase.removeChannel(ch); };
@@ -673,6 +731,9 @@ function StationWipSummary({ station, onPickVehicle }: { station: StationCode; o
                     <div className="font-mono text-xs">{v.vin}</div>
                     <div className="text-xs text-muted-foreground mt-0.5">
                       {v.lot?.model ?? "—"} · {getCode(v.actual_color_id ?? v.planned_color_id) ?? "No color"}
+                      {station === "paint" && v.current_station !== "paint" && (
+                        <span className="ml-1 text-warning">({stationByCode(v.current_station as StationCode)?.label ?? v.current_station})</span>
+                      )}
                     </div>
                   </div>
                   <Badge variant={v.hasOpenIssue ? "warning" : "success"} className="text-[10px] px-1.5 shrink-0">
@@ -1297,17 +1358,29 @@ function ColorPicker({ color, setColor }: { color: string; setColor: (v: string)
 
 function PaintWaitingVehicles() {
   const { getCode } = useColors();
-  const [vehicles, setVehicles] = useState<Array<{ vin: string; vin_suffix: string; planned_color_id: string | null; id: string }>>([]);
+  const [vehicles, setVehicles] = useState<Array<{ vin: string; vin_suffix: string; planned_color_id: string | null; id: string; current_station: string | null }>>([]);
 
   const load = async () => {
     const { data } = await supabase
       .from("vehicles")
-      .select("id, vin, vin_suffix, planned_color_id")
-      .eq("current_station", "paint")
+      .select("id, vin, vin_suffix, planned_color_id, current_station")
+      .in("current_station", ["paint", "wbs", "line_feeding", "body_shop"])
+      .is("actual_color_id", null)
       .order("created_at", { ascending: true });
     setVehicles(data ?? []);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const ch = supabase.channel("paint-waiting-color")
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "vehicles" }, payload => {
+        const n = payload.new as any;
+        if (n?.actual_color_id) setVehicles(prev => prev.filter(v => v.id !== n.id));
+        else load();
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "vehicles" }, () => { load(); })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, []);
 
   if (vehicles.length === 0) return null;
 
@@ -1319,7 +1392,10 @@ function PaintWaitingVehicles() {
           {vehicles.map(v => (
             <li key={v.id} className="py-2 flex justify-between font-mono text-xs">
               <span>{v.vin}</span>
-              <span className="text-muted-foreground">Plan: {getCode(v.planned_color_id)}</span>
+              <span className="text-muted-foreground flex items-center gap-2">
+                <Badge variant="outline" className="text-[10px] px-1 py-0">{stationByCode(v.current_station as StationCode)?.label ?? v.current_station}</Badge>
+                Plan: {getCode(v.planned_color_id)}
+              </span>
             </li>
           ))}
         </ul>
