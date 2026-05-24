@@ -3,7 +3,7 @@ import { RequireAuth } from "@/components/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/lib/auth-context";
 import { STATIONS } from "@/lib/stations";
-import { Lock, ChevronRight, ShieldOff } from "lucide-react";
+import { Lock, ChevronRight, ShieldOff, PaintBucket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/StatCard";
@@ -129,6 +129,13 @@ function Home() {
                 </Link>
               );
             })}
+            <Link to="/bulk/$code" params={{ code: "paint" }}
+              className="relative rounded-xl border bg-card p-4 hover:border-primary/40 hover:shadow-[var(--shadow-pop)] transition-all border-dashed">
+              {(stationCounts["paint"] ?? 0) > 0 && <Badge variant="warning" className="absolute top-2 right-2 text-[10px] px-1.5">{stationCounts["paint"]}</Badge>}
+              <div className="h-10 w-10 rounded-lg bg-amber-500/10 text-amber-600 grid place-items-center"><PaintBucket className="h-5 w-5" /></div>
+              <div className="mt-3 font-medium">Paint Release</div>
+              <div className="text-xs text-muted-foreground">Bulk OUT — contract cars</div>
+            </Link>
           </div>
         </section>
       )}

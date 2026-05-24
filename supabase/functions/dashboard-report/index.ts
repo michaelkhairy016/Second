@@ -27,6 +27,7 @@ const MODULE_CONFIG: Record<string, { title: string; stations: string[]; color: 
 const REASON_MAP: Record<string, string> = {
   ckd: "CKD",
   local: "Local",
+  plastics: "PLASTICS PART",
   missing_plastics: "PLASTICS PART",
   missing_paint_miscolored: "Scratches",
   unavailable_factory: "Scratches",
@@ -252,15 +253,29 @@ Deno.serve(async (req: Request) => {
     };
 
     // === HEADER ===
-    doc.setFontSize(18);
+    // Left: report title + company
+    doc.setFontSize(16);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(30, 41, 59);
-    doc.text(config.title, pageWidth / 2, y, { align: "center" });
-    y += 7;
-    doc.setFontSize(11);
+    doc.text(config.title, 14, y);
+    y += 6;
+    doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(71, 85, 105);
-    doc.text("Aboul Fotouh Automotive — MPC Department", pageWidth / 2, y, { align: "center" });
+    doc.text("Aboul Fotouh Automotive", 14, y);
+    y += 5;
+    // Right: MPC Department + Production Planning Section
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(30, 58, 138);
+    doc.text("MPC Department", pageWidth - 14, y - 11, { align: "right" });
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(71, 85, 105);
+    doc.text("Production Planning Section", pageWidth - 14, y - 6, { align: "right" });
+    // Divider
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.5);
+    doc.line(14, y, pageWidth - 14, y);
     y += 5;
     doc.setFontSize(8);
     doc.setTextColor(100, 116, 139);

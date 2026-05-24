@@ -157,6 +157,10 @@ function NewShortage({ onDone }: { onDone: () => void }) {
     if (!picked) return toast.error("Pick a VIN");
     const partList = parts.split(",").map(s => s.trim()).filter(Boolean);
     if (partList.length === 0) return toast.error("List at least one part");
+    // Duplicate check: already has open shortage
+    const { data: existing } = await supabase.from("shortages")
+      .select("id").eq("vehicle_id", picked.id).eq("status", "open").maybeSingle();
+    if (existing) { toast.warning("This vehicle already has an open shortage."); return; }
     setBusy(true);
     const user = (await supabase.auth.getUser()).data.user;
     const { error } = await supabase.from("shortages").insert({
@@ -201,6 +205,7 @@ function NewShortage({ onDone }: { onDone: () => void }) {
                 <SelectItem value="missing_plastics">Missing (Plastics Paint Shop)</SelectItem>
                 <SelectItem value="missing_paint_miscolored">Missing (Paint Shop — Miscolored)</SelectItem>
                 <SelectItem value="general_missing">General Missing</SelectItem>
+                <SelectItem value="plastics">Plastics</SelectItem>
               </SelectContent>
             </Select>
           </div>

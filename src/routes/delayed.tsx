@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { STATIONS, stationByCode } from "@/lib/stations";
 import { CheckCircle2, FileSpreadsheet, FileDown, Loader2 } from "lucide-react";
 import { exportToCSV } from "@/lib/export";
@@ -32,6 +33,17 @@ interface DelayedVehicle {
   job_order_id: string | null;
 }
 
+interface VehicleDetail {
+  vin: string;
+  current_station: string | null;
+  lot_code: string | null;
+  lot_model: string | null;
+  job_order_name: string | null;
+  actual_color_id: string | null;
+  issues: { title: string; status: string; station: string; created_at: string }[];
+  shortages: { parts: string[]; status: string; shortage_reason: string | null; created_at: string }[];
+}
+
 function DelayedPage() {
   const { isSuperuser, isStaff } = useAuth();
   const nav = useNavigate();
@@ -44,6 +56,9 @@ function DelayedPage() {
   const [vehicles, setVehicles] = useState<DelayedVehicle[]>([]);
   const [loading, setLoading] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [vehicleIssues, setVehicleIssues] = useState<Map<string, string[]>>(new Map());
+  const [detail, setDetail] = useState<VehicleDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const generatePdfReport = async () => {
     setGeneratingPdf(true);
@@ -90,7 +105,24 @@ function DelayedPage() {
       console.error("Error loading delayed vehicles:", error);
       setVehicles([]);
     } else {
-      setVehicles((data as unknown) as DelayedVehicle[]);
+      const delayed = (data as unknown) as DelayedVehicle[];
+      setVehicles(delayed);
+
+      // Batch fetch open issues for delayed vehicles (single query)
+      if (delayed.length > 0) {
+        const ids = delayed.map(v => v.vehicle_id);
+        const { data: issuesData } = await supabase
+          .from("issues")
+          .select("vehicle_id, title")
+          .in("vehicle_id", ids)
+          .in("status", ["open", "in_progress"]);
+        const m = new Map<string, string[]>();
+        (issuesData ?? []).forEach((i: any) => {
+          if (!m.has(i.vehicle_id)) m.set(i.vehicle_id, []);
+          m.get(i.vehicle_id)!.push(i.title);
+        });
+        setVehicleIssues(m);
+      }
     }
     setLoading(false);
   }, [localThreshold]);
@@ -104,6 +136,43 @@ function DelayedPage() {
     return () => { supabase.removeChannel(ch); };
   }, [loadDelayed]);
 
+  const loadDetail = async (v: DelayedVehicle) => {
+    setDetailLoading(true);
+    setDetail(null);
+    const [vRes, issRes, shRes, joRes] = await Promise.all([
+      supabase.from("vehicles").select("vin, current_station, lot_id, actual_color_id, job_order_id").eq("id", v.vehicle_id).maybeSingle(),
+      supabase.from("issues").select("title, status, station, created_at").eq("vehicle_id", v.vehicle_id).order("created_at", { ascending: false }).limit(10),
+      supabase.from("shortages").select("parts, status, shortage_reason, created_at").eq("vehicle_id", v.vehicle_id).order("created_at", { ascending: false }).limit(5),
+      v.job_order_id
+        ? supabase.from("job_orders").select("name").eq("id", v.job_order_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+    const vehicle = vRes.data as any;
+    let lotCode = v.lot_code;
+    let lotModel = v.lot_model;
+    if (vehicle?.lot_id) {
+      const { data: lot } = await supabase.from("lots").select("lot_code, model").eq("id", vehicle.lot_id).maybeSingle();
+      if (lot) { lotCode = lot.lot_code; lotModel = lot.model; }
+    } else if (vehicle?.job_order_id) {
+      const { data: jol } = await supabase.from("job_order_lots").select("lot_id").eq("job_order_id", vehicle.job_order_id).limit(1).maybeSingle();
+      if (jol?.lot_id) {
+        const { data: lot } = await supabase.from("lots").select("lot_code, model").eq("id", jol.lot_id).maybeSingle();
+        if (lot) { lotCode = lot.lot_code; lotModel = lot.model; }
+      }
+    }
+    setDetail({
+      vin: vehicle?.vin ?? v.vin,
+      current_station: vehicle?.current_station ?? v.current_station,
+      lot_code: lotCode ?? null,
+      lot_model: lotModel ?? null,
+      job_order_name: (joRes.data as any)?.name ?? null,
+      actual_color_id: vehicle?.actual_color_id ?? null,
+      issues: (issRes.data ?? []) as any[],
+      shortages: (shRes.data ?? []) as any[],
+    });
+    setDetailLoading(false);
+  };
+
   const handleExport = () => {
     const flatRows = vehicles.map(v => ({
       "VIN": v.vin,
@@ -114,6 +183,7 @@ function DelayedPage() {
       "Days Over Threshold": v.working_days_at_station - localThreshold,
       "Lot Code": v.lot_code ?? "",
       "Model": v.lot_model ?? "",
+      "State": (vehicleIssues.get(v.vehicle_id)?.length ?? 0) > 0 ? "Has Issue" : "OK",
     }));
     if (flatRows.length > 0) {
       exportToCSV(flatRows, `delayed-vehicles-${new Date().toISOString().slice(0, 10)}`);
@@ -177,7 +247,8 @@ function DelayedPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>VIN Suffix</TableHead>
+                    <TableHead>VIN</TableHead>
+                    <TableHead>State</TableHead>
                     <TableHead>Station</TableHead>
                     <TableHead>Entered</TableHead>
                     <TableHead>Working Hours</TableHead>
@@ -188,36 +259,123 @@ function DelayedPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {vehicles.map(v => (
-                    <TableRow key={v.vehicle_id} className={getRowClass(v.working_days_at_station)}>
-                      <TableCell className="font-mono text-xs">{v.vin}</TableCell>
-                      <TableCell className="text-xs">
-                        {stationByCode(v.current_station as StationCode)?.label ?? v.current_station}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {new Date(v.entered_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
-                      </TableCell>
-                      <TableCell className="text-xs font-mono font-medium">
-                        {Math.round(v.working_hours_at_station)}h
-                      </TableCell>
-                      <TableCell className="text-xs font-medium">
-                        <Badge variant={v.working_days_at_station - localThreshold >= 3 ? "destructive" : "secondary"}>
-                          {v.working_days_at_station}d
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs font-medium text-destructive">
-                        +{v.working_days_at_station - localThreshold}d
-                      </TableCell>
-                      <TableCell className="text-xs">{v.lot_code ?? "—"}</TableCell>
-                      <TableCell className="text-xs">{v.lot_model ?? "—"}</TableCell>
-                    </TableRow>
-                  ))}
+                  {vehicles.map(v => {
+                    const issues = vehicleIssues.get(v.vehicle_id) ?? [];
+                    const hasIssue = issues.length > 0;
+                    return (
+                      <TableRow key={v.vehicle_id} className={getRowClass(v.working_days_at_station)}>
+                        <TableCell className="font-mono text-xs">
+                          <button onClick={() => loadDetail(v)} className="text-blue-600 hover:underline cursor-pointer text-left">{v.vin}</button>
+                        </TableCell>
+                        <TableCell>
+                          {hasIssue
+                            ? <Badge variant="destructive" className="text-[10px] px-1.5">Issue ({issues.length})</Badge>
+                            : <Badge variant="success" className="text-[10px] px-1.5">OK</Badge>
+                          }
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {stationByCode(v.current_station as StationCode)?.label ?? v.current_station}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {new Date(v.entered_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono font-medium">
+                          {Math.round(v.working_hours_at_station)}h
+                        </TableCell>
+                        <TableCell className="text-xs font-medium">
+                          <Badge variant={v.working_days_at_station - localThreshold >= 3 ? "destructive" : "secondary"}>
+                            {v.working_days_at_station}d
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs font-medium text-destructive">
+                          +{v.working_days_at_station - localThreshold}d
+                        </TableCell>
+                        <TableCell className="text-xs">{v.lot_code ?? "—"}</TableCell>
+                        <TableCell className="text-xs">{v.lot_model ?? "—"}</TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
           )}
         </CardContent>
       </Card>
+
+      {/* Vehicle Detail Dialog */}
+      <Dialog open={!!detail || detailLoading} onOpenChange={() => { setDetail(null); setDetailLoading(false); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm">{detail?.vin ?? "Loading..."}</DialogTitle>
+          </DialogHeader>
+          {detailLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+          ) : detail ? (
+            <div className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs text-muted-foreground">Current Station</div>
+                  <div className="font-medium">{stationByCode(detail.current_station ?? "")?.label ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Lot Code</div>
+                  <div className="font-mono">{detail.lot_code ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Model</div>
+                  <div>{detail.lot_model ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Job Order</div>
+                  <div>{detail.job_order_name ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Color</div>
+                  <div className="font-mono">{detail.actual_color_id ?? "—"}</div>
+                </div>
+              </div>
+
+              {detail.issues.length > 0 && (
+                <div>
+                  <h4 className="font-medium text-xs text-muted-foreground mb-1">Issues ({detail.issues.length})</h4>
+                  <ul className="divide-y border rounded-md">
+                    {detail.issues.map((iss, i) => (
+                      <li key={i} className="px-3 py-1.5 flex items-center justify-between text-xs">
+                        <span>{iss.title}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-muted-foreground">{stationByCode(iss.station)?.label ?? iss.station}</span>
+                          <Badge variant={iss.status === "open" ? "destructive" : "success"} className="text-[10px] px-1">{iss.status}</Badge>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {detail.shortages.length > 0 && (
+                <div>
+                  <h4 className="font-medium text-xs text-muted-foreground mb-1">Shortages ({detail.shortages.length})</h4>
+                  <ul className="divide-y border rounded-md">
+                    {detail.shortages.map((s, i) => (
+                      <li key={i} className="px-3 py-1.5 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span>{(s.parts as string[]).join(", ")}</span>
+                          <Badge variant={s.status === "open" ? "destructive" : "success"} className="text-[10px] px-1">{s.status}</Badge>
+                        </div>
+                        <div className="text-muted-foreground mt-0.5">{s.shortage_reason ?? ""} · {new Date(s.created_at).toLocaleDateString("en-GB")}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {detail.issues.length === 0 && detail.shortages.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-2">No issues or shortages recorded.</p>
+              )}
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

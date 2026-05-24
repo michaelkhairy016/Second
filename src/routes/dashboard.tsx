@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { RequireAuth } from "@/components/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/lib/auth-context";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -11,9 +11,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/EmptyState";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { LayoutDashboard, Download, Search, Loader2, CalendarDays } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { LayoutDashboard, Download, Search, Loader2, CalendarDays, ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
-import { STATIONS } from "@/lib/stations";
+import { STATIONS, stationByCode } from "@/lib/stations";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — AFA Shopfloor" }] }),
@@ -34,11 +36,6 @@ type Dept = typeof DEPARTMENTS[number];
 
 const DEPT_STATION: Record<Dept, string> = { shortages: "shortage", pbs: "pbs", wbs: "wbs" };
 const DEPT_LABEL: Record<Dept, string> = { shortages: "Shortages", pbs: "PBS", wbs: "WBS" };
-const DEPT_TITLE: Record<Dept, string> = {
-  shortages: "Shortages Department Analytics",
-  pbs: "PBS Department Analytics",
-  wbs: "WBS Department Analytics",
-};
 
 const SHORTAGE_CATEGORIES = ["PLASTICS PART", "Local", "CKD", "Scratches"] as const;
 const PBS_CATEGORIES = ["No Issue", "CKD", "Local", "Plastics", "Dismantled"] as const;
@@ -47,6 +44,7 @@ const WBS_CATEGORIES = ["Issue", "OK"] as const;
 function mapShortageReason(raw: string | null): string {
   if (!raw) return "CKD";
   if (raw === "missing_plastics") return "PLASTICS PART";
+  if (raw === "plastics") return "PLASTICS PART";
   if (raw === "local") return "Local";
   if (raw === "ckd") return "CKD";
   if (raw.includes("scratch") || raw === "missing_paint_miscolored") return "Scratches";
@@ -64,6 +62,9 @@ function Page() {
   const [loading, setLoading] = useState(true);
   const [calOpen, setCalOpen] = useState(false);
   const [live, setLive] = useState(true);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [expandedModel, setExpandedModel] = useState<string | null>(null);
+  const [cellDialog, setCellDialog] = useState<{ title: string; rows: { vin: string; model: string; station: string | null; issue: string }[] } | null>(null);
 
   const [events, setEvents] = useState<EventRow[]>([]);
   const [shortages, setShortages] = useState<ShortageRow[]>([]);
@@ -78,6 +79,21 @@ function Page() {
     vehicles.forEach(v => { if (v.lot_id && lotMap[v.lot_id]) m.set(v.id, lotMap[v.lot_id]); });
     return m;
   }, [vehicles, lotMap]);
+
+  // Search filter: matching vehicle IDs
+  const searchVidSet = useMemo(() => {
+    if (!vinSearch.trim()) return null;
+    const q = vinSearch.toLowerCase();
+    const ids = new Set<string>();
+    vehicles.forEach(v => {
+      if (v.vin.toLowerCase().includes(q)) ids.add(v.id);
+    });
+    events.forEach(e => {
+      const model = vModel.get(e.vehicle_id) ?? "";
+      if (model.toLowerCase().includes(q)) ids.add(e.vehicle_id);
+    });
+    return ids;
+  }, [vinSearch, vehicles, vModel, events]);
 
   const load = async () => {
     setLoading(true);
@@ -102,7 +118,6 @@ function Page() {
     setIssues((iRes.data ?? []) as IssueRow[]);
     setLoading(false);
 
-    // Store monthly data for monthly reports
     (window as any).__monthlyEvents = (mEvRes.data ?? []) as EventRow[];
     (window as any).__monthlyShortages = (mShRes.data ?? []) as unknown as ShortageRow[];
   };
@@ -138,8 +153,12 @@ function Page() {
   }, [wipVehicles, events, station]);
 
   const vehicleIssues = useMemo(() => {
-    const m = new Map<string, boolean>();
-    issues.forEach(i => { if (i.vehicle_id) m.set(i.vehicle_id, true); });
+    const m = new Map<string, string[]>();
+    issues.forEach(i => {
+      if (!i.vehicle_id) return;
+      if (!m.has(i.vehicle_id)) m.set(i.vehicle_id, []);
+      m.get(i.vehicle_id)!.push(i.title);
+    });
     return m;
   }, [issues]);
 
@@ -162,11 +181,13 @@ function Page() {
         if (activeDept === "shortages") category = vehicleShortageCategory.get(v.id) ?? "CKD";
         else if (activeDept === "pbs") category = vehicleIssues.has(v.id) ? "Dismantled" : "No Issue";
         else if (activeDept === "wbs") category = vehicleIssues.has(v.id) ? "Issue" : "OK";
-        return { vin: v.vin, model, category, hours };
+        const issueList = vehicleIssues.get(v.id) ?? [];
+        return { vin: v.vin, model, category, hours, issue: issueList.join("; "), vehicleId: v.id };
       })
       .filter(v => v.hours > delayThreshold)
+      .filter(v => !searchVidSet || searchVidSet.has(v.vehicleId))
       .sort((a, b) => b.hours - a.hours);
-  }, [wipVehicles, events, station, delayThreshold, activeDept, vModel, vehicleIssues, vehicleShortageCategory]);
+  }, [wipVehicles, events, station, delayThreshold, activeDept, vModel, vehicleIssues, vehicleShortageCategory, searchVidSet]);
 
   const buildReportTable = useMemo(() => {
     if (activeDept === "shortages") {
@@ -252,7 +273,7 @@ function Page() {
     });
     monthDayEvents.filter(e => e.kind === "out").forEach(e => {
       const c = classify(e.vehicle_id);
-      monthMap.Out[c] = (monthMap.Out[c] ?? 0) + 1;
+      monthMap.Out[c] = (dayMap.Out[c] ?? 0) + 1;
     });
     const wipMap: Record<string, number> = {};
     cats.forEach(c => wipMap[c] = 0);
@@ -264,18 +285,18 @@ function Page() {
   }, [activeDept, dayEvents, monthDayEvents, wipVehicles, vehicleIssues, vehicleShortageCategory, shortages]);
 
   const modelAnalysis = useMemo(() => {
-    const models = new Map<string, { inToday: number; outToday: number; wip: number }>();
+    const models = new Map<string, { inToday: number; outToday: number; wip: number; vinIds: string[] }>();
     dayEvents.filter(e => e.kind === "in").forEach(e => {
       const m = vModel.get(e.vehicle_id);
-      if (m) { if (!models.has(m)) models.set(m, { inToday: 0, outToday: 0, wip: 0 }); models.get(m)!.inToday++; }
+      if (m) { if (!models.has(m)) models.set(m, { inToday: 0, outToday: 0, wip: 0, vinIds: [] }); models.get(m)!.inToday++; models.get(m)!.vinIds.push(e.vehicle_id); }
     });
     dayEvents.filter(e => e.kind === "out").forEach(e => {
       const m = vModel.get(e.vehicle_id);
-      if (m) { if (!models.has(m)) models.set(m, { inToday: 0, outToday: 0, wip: 0 }); models.get(m)!.outToday++; }
+      if (m) { if (!models.has(m)) models.set(m, { inToday: 0, outToday: 0, wip: 0, vinIds: [] }); models.get(m)!.outToday++; }
     });
     wipVehicles.forEach(v => {
       const m = vModel.get(v.id);
-      if (m) { if (!models.has(m)) models.set(m, { inToday: 0, outToday: 0, wip: 0 }); models.get(m)!.wip++; }
+      if (m) { if (!models.has(m)) models.set(m, { inToday: 0, outToday: 0, wip: 0, vinIds: [] }); models.get(m)!.wip++; models.get(m)!.vinIds.push(v.id); }
     });
     return Array.from(models.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [dayEvents, wipVehicles, vModel]);
@@ -287,8 +308,9 @@ function Page() {
       kind: e.kind,
       recorded_at: e.recorded_at,
       vehicle_id: e.vehicle_id,
+      issue: (vehicleIssues.get(e.vehicle_id) ?? []).join("; "),
+      shortage: vehicleShortageCategory.get(e.vehicle_id) ?? "",
     }));
-    // Resolve VINs
     const vinMap = new Map<string, string>();
     vehicles.forEach(v => vinMap.set(v.id, v.vin));
     rows.forEach(r => { r.vin = vinMap.get(r.vehicle_id) ?? "—"; });
@@ -297,33 +319,97 @@ function Page() {
       rows = rows.filter(r => r.vin.toLowerCase().includes(q) || r.model.toLowerCase().includes(q));
     }
     return rows.sort((a, b) => new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime());
-  }, [dayEvents, vModel, vehicles, vinSearch]);
+  }, [dayEvents, vModel, vehicles, vinSearch, vehicleIssues, vehicleShortageCategory]);
+
+  // Build vehicle detail rows for cell dialog
+  const buildCellRows = useCallback((category: string, direction: "in" | "out" | "wip"): { vin: string; model: string; station: string | null; issue: string }[] => {
+    const vinMap = new Map<string, string>();
+    vehicles.forEach(v => vinMap.set(v.id, v.vin));
+
+    if (direction === "wip") {
+      return wipVehicles
+        .filter(v => {
+          let cat = "OK";
+          if (activeDept === "shortages") cat = vehicleShortageCategory.get(v.id) ?? "CKD";
+          else if (activeDept === "pbs") cat = vehicleIssues.has(v.id) ? "Dismantled" : "No Issue";
+          else if (activeDept === "wbs") cat = vehicleIssues.has(v.id) ? "Issue" : "OK";
+          return cat === category;
+        })
+        .map(v => ({
+          vin: v.vin,
+          model: vModel.get(v.id) ?? "—",
+          station: v.current_station,
+          issue: (vehicleIssues.get(v.id) ?? []).join("; "),
+        }));
+    }
+
+    const sourceEvents = direction === "in" ? dayEvents.filter(e => e.kind === "in") : dayEvents.filter(e => e.kind === "out");
+    return sourceEvents
+      .filter(e => {
+        if (activeDept === "shortages") return (vehicleShortageCategory.get(e.vehicle_id) ?? "CKD") === category;
+        if (activeDept === "pbs") return (vehicleIssues.has(e.vehicle_id) ? "Dismantled" : "No Issue") === category;
+        return (vehicleIssues.has(e.vehicle_id) ? "Issue" : "OK") === category;
+      })
+      .map(e => ({
+        vin: vinMap.get(e.vehicle_id) ?? "—",
+        model: vModel.get(e.vehicle_id) ?? "—",
+        station: null,
+        issue: (vehicleIssues.get(e.vehicle_id) ?? []).join("; "),
+      }));
+  }, [wipVehicles, dayEvents, activeDept, vehicleIssues, vehicleShortageCategory, vModel, vehicles]);
 
   const downloadReport = async () => {
-    const projectUrl = (await supabase.functions.invoke("dashboard-report", {
-      body: { date: selectedDate, module: activeDept === "shortages" ? "shortage" : activeDept },
-    }));
-    // @ts-ignore
-    if (projectUrl instanceof Blob || (projectUrl as any)?.data) {
-      // @ts-ignore
-      const blob = projectUrl instanceof Blob ? projectUrl : new Blob([projectUrl.data], { type: "application/pdf" });
+    setReportBusy(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || "";
+      const supabaseKey = (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY || "";
+      if (!supabaseUrl) throw new Error("Supabase URL not configured");
+      const res = await fetch(`${supabaseUrl}/functions/v1/dashboard-report`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session?.access_token ?? ""}`,
+          "apikey": supabaseKey,
+        },
+        body: JSON.stringify({ date: selectedDate, module: activeDept === "shortages" ? "shortage" : activeDept }),
+      });
+      if (!res.ok) {
+        let errMsg = `Server error ${res.status}`;
+        try { const t = await res.text(); if (t) errMsg = t; } catch {}
+        throw new Error(errMsg);
+      }
+      const blob = await res.blob();
+      if (blob.size < 100) throw new Error("Report too small — generation may have failed");
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = `${activeDept}-report-${selectedDate}.pdf`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } else {
-      toast.error("Failed to generate report");
+      toast.success("Report downloaded");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to download report");
+    } finally {
+      setReportBusy(false);
     }
   };
 
   const { cats, dayMap, monthMap, wipMap } = buildReportTable;
 
+  // Chart data for category distribution
+  const chartData = useMemo(() => {
+    return cats.map(c => ({ label: c, value: wipMap[c] ?? 0 })).filter(d => d.value > 0);
+  }, [cats, wipMap]);
+
+  const chartMaxVal = Math.max(...chartData.map(d => d.value), 1);
+
   return (
     <div className="space-y-4">
       {/* Controls Bar */}
-      <div className="bg-card p-4 rounded-lg shadow-sm border flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-card p-4 rounded-lg shadow-sm border space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
           <label className="text-sm font-medium">View Data for:</label>
           <Popover open={calOpen} onOpenChange={setCalOpen}>
@@ -346,24 +432,24 @@ function Page() {
             {live && <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-white" /></span>}
             {live ? "Go Live" : "Live Off"}
           </Button>
-        </div>
-        <div className="flex-grow mx-4 max-w-md">
-          <div className="relative">
-            <Input placeholder="Global VIN Search..." value={vinSearch} onChange={e => setVinSearch(e.target.value)} className="pl-9" />
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <div className="flex-1 min-w-[180px] max-w-md">
+            <div className="relative">
+              <Input placeholder="Global VIN / Model Search..." value={vinSearch} onChange={e => setVinSearch(e.target.value)} className="pl-9" />
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <label className="text-sm font-medium">Delay Threshold (Hours):</label>
+          <label className="text-sm font-medium">Delay (h):</label>
           <Input type="number" value={delayThreshold} onChange={e => setDelayThreshold(Number(e.target.value) || 24)} className="w-20" />
-          <Button size="sm" onClick={downloadReport} className="gap-2 bg-teal-600 hover:bg-teal-700">
-            <Download className="h-4 w-4" /> Download Report
+          <Button size="sm" onClick={downloadReport} disabled={reportBusy} className="gap-2 bg-teal-600 hover:bg-teal-700">
+            {reportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Download Report
           </Button>
         </div>
       </div>
 
       {/* Department Tabs */}
-      <Tabs value={activeDept} onValueChange={v => setActiveDept(v as Dept)}>
+      <Tabs value={activeDept} onValueChange={v => { setActiveDept(v as Dept); setExpandedModel(null); }}>
         <TabsList>
           {DEPARTMENTS.map(d => (
             <TabsTrigger key={d} value={d}>{DEPT_LABEL[d]}</TabsTrigger>
@@ -397,15 +483,17 @@ function Page() {
                             <th className="p-2 font-semibold">VIN</th>
                             <th className="p-2 font-semibold">Model</th>
                             <th className="p-2 font-semibold">Category</th>
+                            <th className="p-2 font-semibold">Issue</th>
                             <th className="p-2 font-semibold">Time in WIP (Hours)</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y">
                           {delayedWip.map((r, i) => (
                             <tr key={i}>
-                              <td className="p-2">{r.vin}</td>
+                              <td className="p-2 font-mono text-xs">{r.vin}</td>
                               <td className="p-2">{r.model}</td>
-                              <td className="p-2">{r.category}</td>
+                              <td className="p-2"><Badge variant="secondary" className="text-[10px]">{r.category}</Badge></td>
+                              <td className="p-2 text-xs text-muted-foreground">{r.issue || "—"}</td>
                               <td className="p-2 font-bold text-destructive">{r.hours.toFixed(1)}</td>
                             </tr>
                           ))}
@@ -417,22 +505,42 @@ function Page() {
 
                 {/* Report Tables Grid */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {/* Today's Report */}
                   <div className="bg-card rounded-lg border p-4">
                     <h3 className="font-bold text-lg text-center mb-3">Today's Report</h3>
-                    <ReportTable cats={cats} data={dayMap} />
+                    <ReportTable cats={cats} data={dayMap} onCellClick={(cat, dir) => setCellDialog({ title: `${cat} — ${dir === "in" ? "In Today" : "Out Today"}`, rows: buildCellRows(cat, dir) })} />
                   </div>
-                  {/* Monthly Report */}
                   <div className="bg-card rounded-lg border p-4">
                     <h3 className="font-bold text-lg text-center mb-3">Monthly Report</h3>
-                    <ReportTable cats={cats} data={monthMap} />
+                    <ReportTable cats={cats} data={monthMap} onCellClick={() => {}} />
                   </div>
-                  {/* WIP Summary */}
                   <div className="bg-card rounded-lg border p-4 lg:col-span-2 xl:col-span-1">
                     <h3 className="font-bold text-lg text-center mb-3">WIP Summary</h3>
-                    <WipTable cats={cats} data={wipMap} />
+                    <WipTable cats={cats} data={wipMap} onCellClick={(cat) => setCellDialog({ title: `${cat} — WIP`, rows: buildCellRows(cat, "wip") })} />
                   </div>
                 </div>
+
+                {/* Charts */}
+                {chartData.length > 0 && (
+                  <div className="bg-card rounded-lg border p-4">
+                    <h3 className="font-bold text-lg text-center mb-4">Category Distribution</h3>
+                    <div className="space-y-2 max-w-lg mx-auto">
+                      {chartData.map((d, i) => {
+                        const colors = ["bg-orange-500", "bg-blue-500", "bg-green-500", "bg-amber-500", "bg-purple-500", "bg-red-500"];
+                        const pct = (d.value / chartMaxVal) * 100;
+                        return (
+                          <div key={i} className="flex items-center gap-2">
+                            <span className="text-xs w-28 text-right shrink-0">{d.label}</span>
+                            <div className="flex-1 bg-muted rounded h-6 overflow-hidden">
+                              <div className={`h-full rounded ${colors[i % colors.length]} flex items-center pl-2`} style={{ width: `${Math.max(pct, 8)}%` }}>
+                                <span className="text-[10px] font-bold text-white">{d.value}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* Model Analysis */}
                 {modelAnalysis.length > 0 && (
@@ -442,6 +550,7 @@ function Page() {
                       <table className="w-full text-center text-sm">
                         <thead>
                           <tr className="bg-muted">
+                            <th className="p-2 font-semibold"></th>
                             <th className="p-2 font-semibold">Model</th>
                             <th className="p-2 font-semibold">In (Today)</th>
                             <th className="p-2 font-semibold">Out (Today)</th>
@@ -450,12 +559,46 @@ function Page() {
                         </thead>
                         <tbody className="divide-y">
                           {modelAnalysis.map(([model, data]) => (
-                            <tr key={model}>
-                              <td className="p-2 font-bold">{model}</td>
-                              <td className="p-2">{data.inToday}</td>
-                              <td className="p-2">{data.outToday}</td>
-                              <td className="p-2">{data.wip}</td>
-                            </tr>
+                            <>
+                              <tr key={model} className="hover:bg-muted/50 cursor-pointer" onClick={() => setExpandedModel(expandedModel === model ? null : model)}>
+                                <td className="p-2">{expandedModel === model ? <ChevronDown className="h-4 w-4 mx-auto" /> : <ChevronRight className="h-4 w-4 mx-auto" />}</td>
+                                <td className="p-2 font-bold">{model}</td>
+                                <td className="p-2">{data.inToday}</td>
+                                <td className="p-2">{data.outToday}</td>
+                                <td className="p-2">{data.wip}</td>
+                              </tr>
+                              {expandedModel === model && (
+                                <tr key={`${model}-detail`}>
+                                  <td colSpan={5} className="p-0">
+                                    <div className="bg-muted/30 p-3">
+                                      <table className="w-full text-xs">
+                                        <thead>
+                                          <tr className="text-muted-foreground">
+                                            <th className="text-left p-1">VIN</th>
+                                            <th className="text-left p-1">Station</th>
+                                            <th className="text-left p-1">Issue</th>
+                                            <th className="text-left p-1">Shortage</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {wipVehicles
+                                            .filter(v => vModel.get(v.id) === model)
+                                            .slice(0, 20)
+                                            .map(v => (
+                                              <tr key={v.id}>
+                                                <td className="p-1 font-mono">{v.vin}</td>
+                                                <td className="p-1">{stationByCode(v.current_station ?? "")?.label ?? "—"}</td>
+                                                <td className="p-1">{(vehicleIssues.get(v.id) ?? []).join("; ") || "—"}</td>
+                                                <td className="p-1">{vehicleShortageCategory.get(v.id) ?? "—"}</td>
+                                              </tr>
+                                            ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </>
                           ))}
                         </tbody>
                       </table>
@@ -476,6 +619,8 @@ function Page() {
                             <th className="p-2 font-semibold text-left">Time</th>
                             <th className="p-2 font-semibold text-left">VIN</th>
                             <th className="p-2 font-semibold text-left">Model</th>
+                            <th className="p-2 font-semibold text-left">Issue</th>
+                            <th className="p-2 font-semibold text-left">Shortage</th>
                             <th className="p-2 font-semibold">Direction</th>
                           </tr>
                         </thead>
@@ -485,6 +630,8 @@ function Page() {
                               <td className="p-2">{new Date(r.recorded_at).toLocaleTimeString()}</td>
                               <td className="p-2 font-mono text-xs">{r.vin}</td>
                               <td className="p-2">{r.model}</td>
+                              <td className="p-2 text-xs">{r.issue ? <Badge variant="destructive" className="text-[10px]">{r.issue}</Badge> : "—"}</td>
+                              <td className="p-2 text-xs">{r.shortage ? <Badge variant="warning" className="text-[10px]">{r.shortage}</Badge> : "—"}</td>
                               <td className="p-2 text-center">
                                 <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${r.kind === "in" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"}`}>
                                   {r.kind === "in" ? "IN" : "OUT"}
@@ -502,6 +649,41 @@ function Page() {
           </TabsContent>
         ))}
       </Tabs>
+
+      {/* Cell Detail Dialog */}
+      <Dialog open={!!cellDialog} onOpenChange={() => setCellDialog(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle>{cellDialog?.title ?? ""}</DialogTitle>
+          </DialogHeader>
+          <div className="overflow-y-auto max-h-[60vh]">
+            {cellDialog && cellDialog.rows.length > 0 ? (
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-card">
+                  <tr className="bg-muted">
+                    <th className="p-2 text-left font-semibold">VIN</th>
+                    <th className="p-2 text-left font-semibold">Model</th>
+                    <th className="p-2 text-left font-semibold">Station</th>
+                    <th className="p-2 text-left font-semibold">Issue</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {cellDialog.rows.map((r, i) => (
+                    <tr key={i}>
+                      <td className="p-2 font-mono text-xs">{r.vin}</td>
+                      <td className="p-2">{r.model}</td>
+                      <td className="p-2">{stationByCode(r.station ?? "")?.label ?? "—"}</td>
+                      <td className="p-2 text-xs">{r.issue || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-4">No vehicles found.</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -516,7 +698,7 @@ function StatBox({ label, value, color }: { label: string; value: number | strin
   );
 }
 
-function ReportTable({ cats, data }: { cats: readonly string[]; data: Record<string, Record<string, number>> }) {
+function ReportTable({ cats, data, onCellClick }: { cats: readonly string[]; data: Record<string, Record<string, number>>; onCellClick: (cat: string, dir: "in" | "out") => void }) {
   return (
     <table className="w-full text-center text-sm">
       <thead>
@@ -526,10 +708,26 @@ function ReportTable({ cats, data }: { cats: readonly string[]; data: Record<str
         </tr>
       </thead>
       <tbody className="divide-y">
-        {["In", "Out"].map(status => (
+        {(["In", "Out"] as const).map(status => (
           <tr key={status}>
             <td className="font-bold p-2">{status}</td>
-            {cats.map(c => <td key={c} className="p-2">{data[status]?.[c] ?? 0}</td>)}
+            {cats.map(c => {
+              const val = data[status]?.[c] ?? 0;
+              return (
+                <td key={c} className="p-2">
+                  {val > 0 ? (
+                    <button
+                      onClick={() => onCellClick(c, status.toLowerCase() as "in" | "out")}
+                      className="text-blue-600 hover:text-blue-800 hover:underline font-bold cursor-pointer"
+                    >
+                      {val}
+                    </button>
+                  ) : (
+                    <span className="text-muted-foreground">{val}</span>
+                  )}
+                </td>
+              );
+            })}
           </tr>
         ))}
       </tbody>
@@ -537,7 +735,7 @@ function ReportTable({ cats, data }: { cats: readonly string[]; data: Record<str
   );
 }
 
-function WipTable({ cats, data }: { cats: readonly string[]; data: Record<string, number> }) {
+function WipTable({ cats, data, onCellClick }: { cats: readonly string[]; data: Record<string, number>; onCellClick: (cat: string) => void }) {
   return (
     <table className="w-full text-center text-sm">
       <thead>
@@ -549,7 +747,23 @@ function WipTable({ cats, data }: { cats: readonly string[]; data: Record<string
       <tbody>
         <tr>
           <td className="font-bold p-2">WIP</td>
-          {cats.map(c => <td key={c} className="p-2">{data[c] ?? 0}</td>)}
+          {cats.map(c => {
+            const val = data[c] ?? 0;
+            return (
+              <td key={c} className="p-2">
+                {val > 0 ? (
+                  <button
+                    onClick={() => onCellClick(c)}
+                    className="text-blue-600 hover:text-blue-800 hover:underline font-bold cursor-pointer"
+                  >
+                    {val}
+                  </button>
+                ) : (
+                  <span className="text-muted-foreground">{val}</span>
+                )}
+              </td>
+            );
+          })}
         </tr>
       </tbody>
     </table>

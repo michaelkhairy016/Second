@@ -16,10 +16,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ArrowLeft, Loader2, Pencil, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { useColors } from "@/hooks/use-colors";
 import type { StationCode } from "@/lib/db-types";
 
 // Direction constraints per station
 const DIRECTION_CONSTRAINTS: Partial<Record<StationCode, "in" | "out" | "both">> = {
+  paint: "out",
   tcf: "out",
   waiting_repair: "both",
   tcf_offline: "in",
@@ -37,6 +39,7 @@ interface PendingVin {
   model: string;
   found: boolean;
   editing: boolean;
+  actualColorId: string | null;
 }
 
 export const Route = createFileRoute("/bulk/$code")({
@@ -58,6 +61,8 @@ function Page() {
   const [pendingVins, setPendingVins] = useState<PendingVin[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editValue, setEditValue] = useState("");
+  const [bulkColor, setBulkColor] = useState("");
+  const { activeList, getCode } = useColors();
 
   if (!station) return null;
 
@@ -92,16 +97,15 @@ function Page() {
         }
       });
 
-      // Batch queries — map vehicle id → {vin, current_station, lot_id}
-      const vehicleMap = new Map<string, { id: string; vin: string; current_station: string | null; lot_id: string | null }>();
+      // Batch queries — map vehicle id → {vin, current_station, lot_id, actual_color_id}
+      const vehicleMap = new Map<string, { id: string; vin: string; current_station: string | null; lot_id: string | null; actual_color_id: string | null }>();
 
       if (fullVins.length > 0) {
-        const { data } = await supabase.from("vehicles").select("id,vin,current_station,lot_id").in("vin", fullVinVariants).is("completed_at", null);
+        const { data } = await supabase.from("vehicles").select("id,vin,current_station,lot_id,actual_color_id").in("vin", fullVinVariants).is("completed_at", null);
         (data ?? []).forEach(v => vehicleMap.set(v.id, v));
-        // Map each full VIN token to its vehicle
       }
       if (suffixes5.length > 0) {
-        const { data } = await supabase.from("vehicles").select("id,vin,current_station,lot_id").in("vin_suffix", suffixes5).is("completed_at", null);
+        const { data } = await supabase.from("vehicles").select("id,vin,current_station,lot_id,actual_color_id").in("vin_suffix", suffixes5).is("completed_at", null);
         (data ?? []).forEach(v => { if (!vehicleMap.has(v.id)) vehicleMap.set(v.id, v); });
       }
 
@@ -116,7 +120,7 @@ function Page() {
       const lotIds = new Set<string>();
 
       for (const info of tokenInfo) {
-        let data: { id: string; vin: string; current_station: string | null; lot_id: string | null } | null = null;
+        let data: { id: string; vin: string; current_station: string | null; lot_id: string | null; actual_color_id: string | null } | null = null;
 
         if (info.kind === "full") {
           data = vinLookup.get(info.clean) ?? vinLookup.get(`*${info.clean}*`) ?? null;
@@ -126,15 +130,15 @@ function Page() {
           }
         } else {
           // 4-char suffix: individual ilike query (can't batch pattern matching)
-          const { data: d } = await supabase.from("vehicles").select("id,vin,current_station,lot_id").ilike("vin_suffix", `%${info.clean.slice(-4)}`).is("completed_at", null).limit(1).maybeSingle();
+          const { data: d } = await supabase.from("vehicles").select("id,vin,current_station,lot_id,actual_color_id").ilike("vin_suffix", `%${info.clean.slice(-4)}`).is("completed_at", null).limit(1).maybeSingle();
           data = d;
         }
 
         if (data) {
           lotIds.add(data.lot_id ?? "");
-          results.push({ raw: info.raw, id: data.id, vin: data.vin, currentStation: data.current_station, model: "", found: true, editing: false });
+          results.push({ raw: info.raw, id: data.id, vin: data.vin, currentStation: data.current_station, model: "", found: true, editing: false, actualColorId: data.actual_color_id });
         } else {
-          results.push({ raw: info.raw, id: "", vin: "", currentStation: null, model: "", found: false, editing: false });
+          results.push({ raw: info.raw, id: "", vin: "", currentStation: null, model: "", found: false, editing: false, actualColorId: null });
         }
       }
 
@@ -172,8 +176,8 @@ function Page() {
     if (!raw) { cancelEdit(idx); return; }
     const clean = stripVinStars(raw);
     const q = clean.length === 17 || clean.length === 19
-      ? supabase.from("vehicles").select("id, vin, current_station, lot_id").in("vin", [clean, `*${clean}*`]).is("completed_at", null).maybeSingle()
-      : supabase.from("vehicles").select("id, vin, current_station, lot_id").ilike("vin_suffix", `%${clean.slice(-4)}`).is("completed_at", null).limit(1).maybeSingle();
+      ? supabase.from("vehicles").select("id, vin, current_station, lot_id, actual_color_id").in("vin", [clean, `*${clean}*`]).is("completed_at", null).maybeSingle()
+      : supabase.from("vehicles").select("id, vin, current_station, lot_id, actual_color_id").ilike("vin_suffix", `%${clean.slice(-4)}`).is("completed_at", null).limit(1).maybeSingle();
     const { data } = await q;
 
     setPendingVins(prev => prev.map((v, i) => {
@@ -186,9 +190,9 @@ function Page() {
               if (lot) setPendingVins(p => p.map((vv, ii) => ii === idx ? { ...vv, model: lot.model } : vv));
             });
         }
-        return { raw, id: data.id, vin: data.vin, currentStation: data.current_station, model, found: true, editing: false };
+        return { raw, id: data.id, vin: data.vin, currentStation: data.current_station, model, found: true, editing: false, actualColorId: data.actual_color_id };
       }
-      return { raw, id: "", vin: "", currentStation: null, model: "", found: false, editing: false };
+      return { raw, id: "", vin: "", currentStation: null, model: "", found: false, editing: false, actualColorId: null };
     }));
   };
 
@@ -198,31 +202,71 @@ function Page() {
     setBusy(true);
     try {
       const user = (await supabase.auth.getUser()).data.user;
-      const events = matched.map(m => ({ vehicle_id: m.id, station: station.code as StationCode, kind: effectiveKind as "in" | "out", recorded_by: user?.id, source: "bulk" }));
-      const { error: ee } = await supabase.from("station_events").insert(events);
-      if (ee) throw ee;
-      await supabase.from("vehicles").update({ current_station: station.code }).in("id", matched.map(m => m.id));
 
-      // For OUT events, advance station per flow rules
-      if (effectiveKind === "out") {
-        const nextStationMap: Partial<Record<StationCode, StationCode>> = {
-          wbs: "paint", pbs: "tcf", tcf: "waiting_repair", waiting_repair: "repair", repair: "cs",
-        };
-        const nextStation = nextStationMap[station.code as StationCode];
-        if (nextStation) {
-          await supabase.from("vehicles").update({ current_station: nextStation }).in("id", matched.map(m => m.id));
+      if (effectiveKind === "in") {
+        // IN: only create events for vehicles NOT already at this station (prevent duplicates)
+        const alreadyIn = matched.filter(v => v.currentStation === station.code);
+        const newIn = matched.filter(v => v.currentStation !== station.code);
+
+        if (newIn.length > 0) {
+          const events = newIn.map(m => ({ vehicle_id: m.id, station: station.code as StationCode, kind: "in" as const, recorded_by: user?.id, source: "bulk" }));
+          const { error: ee } = await supabase.from("station_events").insert(events);
+          if (ee) throw ee;
+          await supabase.from("vehicles").update({ current_station: station.code }).in("id", newIn.map(m => m.id));
         }
-      }
 
-      // Mark vehicles as completed when they exit PDI
-      if (effectiveKind === "out" && station.code === "pdi") {
-        await supabase.from("vehicles").update({ completed_at: new Date().toISOString() }).in("id", matched.map(m => m.id));
-      }
+        const missing = pendingVins.filter(v => !v.found);
+        setReport({ matched: matched.length, missing: missing.map(v => v.raw) });
+        setDialogOpen(false);
+        toast.success(`Recorded IN: ${newIn.length} new${alreadyIn.length > 0 ? `, ${alreadyIn.length} already at ${station.label}` : ""}`);
+      } else {
+        // OUT: only create events for vehicles currently at this station
+        const atStation = matched.filter(v => v.currentStation === station.code);
+        const notAtStation = matched.filter(v => v.currentStation !== station.code);
 
-      const missing = pendingVins.filter(v => !v.found);
-      setReport({ matched: matched.length, missing: missing.map(v => v.raw) });
-      setDialogOpen(false);
-      toast.success(`Updated ${matched.length} vehicles`);
+        if (atStation.length > 0) {
+          const events = atStation.map(m => ({ vehicle_id: m.id, station: station.code as StationCode, kind: "out" as const, recorded_by: user?.id, source: "bulk" }));
+          const { error: ee } = await supabase.from("station_events").insert(events);
+          if (ee) throw ee;
+
+          // Separate contract vs regular vehicles
+          const contractVins = atStation.filter(v => v.vin.startsWith("CONTRACT-"));
+          const regularVins = atStation.filter(v => !v.vin.startsWith("CONTRACT-"));
+
+          // Contract vehicles: exit facility (mark completed)
+          if (contractVins.length > 0) {
+            const contractUpdate: any = { current_station: "completed" as any, completed_at: new Date().toISOString() };
+            // Assign color to contract cars missing it
+            const uncolored = contractVins.filter(v => !v.actualColorId);
+            if (bulkColor && uncolored.length > 0) {
+              contractUpdate.actual_color_id = bulkColor;
+            }
+            await supabase.from("vehicles").update(contractUpdate).in("id", contractVins.map(m => m.id));
+          }
+
+          // Regular vehicles: advance to next station
+          if (regularVins.length > 0) {
+            const nextStationMap: Partial<Record<StationCode, StationCode>> = {
+              wbs: "paint", paint: "pbs", pbs: "tcf", tcf: "waiting_repair", waiting_repair: "repair", repair: "cs",
+            };
+            const nextStation = nextStationMap[station.code as StationCode];
+            if (nextStation) {
+              await supabase.from("vehicles").update({ current_station: nextStation }).in("id", regularVins.map(m => m.id));
+            }
+          }
+
+          if (station.code === "pdi") {
+            await supabase.from("vehicles").update({ completed_at: new Date().toISOString() }).in("id", atStation.map(m => m.id));
+          }
+        }
+
+        const missing = pendingVins.filter(v => !v.found);
+        const contractOut = atStation.filter(v => v.vin.startsWith("CONTRACT-")).length;
+        const regularOut = atStation.length - contractOut;
+        setReport({ matched: matched.length, missing: missing.map(v => v.raw) });
+        setDialogOpen(false);
+        toast.success(`Released: ${regularOut} to PBS${contractOut > 0 ? `, ${contractOut} contract exited` : ""}${notAtStation.length > 0 ? ` (${notAtStation.length} not at ${station.label})` : ""}`);
+      }
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
 
@@ -258,6 +302,17 @@ function Page() {
           )}
           <Button className="ml-auto" disabled={busy} onClick={lookupVins}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify & Apply"}</Button>
         </div>
+        {station.code === "paint" && (
+          <div className="space-y-1.5">
+            <Label>Color (contract cars)</Label>
+            <select value={bulkColor} onChange={e => setBulkColor(e.target.value)} className="w-full border rounded-md px-3 py-2 text-sm bg-background">
+              <option value="">No color assignment</option>
+              {activeList.map(c => (
+                <option key={c.id} value={c.id}>{c.code} — {c.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {report && (
           <div className="text-sm space-y-1 pt-2 border-t">
             <div className="text-success">✓ Matched: {report.matched}</div>
@@ -291,6 +346,8 @@ function Page() {
                   <>
                     <Badge variant="secondary" className="text-[10px] shrink-0">{stationByCode(v.currentStation ?? "")?.label ?? v.currentStation ?? "?"}</Badge>
                     <span className="text-xs text-muted-foreground shrink-0 max-w-[120px] truncate">{v.model}</span>
+                    {v.vin.startsWith("CONTRACT-") && !v.actualColorId && bulkColor && <Badge variant="info" className="text-[10px] shrink-0">{getCode(bulkColor)}</Badge>}
+                    {v.actualColorId && <Badge variant="outline" className="text-[10px] shrink-0">{getCode(v.actualColorId)}</Badge>}
                   </>
                 )}
                 {!v.found && !v.editing && <Badge variant="destructive" className="text-[10px] shrink-0">Not found</Badge>}

@@ -328,6 +328,15 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
 
   const submit = async (kind: "in" | "out") => {
     if (!picked) return toast.error("Pick a VIN first");
+    // Duplicate prevention: block IN if already at station, block OUT if not at station
+    if (kind === "in" && picked.current_station === station) {
+      toast.warning(`${picked.vin} already at ${stationByCode(station)?.label ?? station}. Dismiss (OUT) first.`);
+      setBusy(false); return;
+    }
+    if (kind === "out" && picked.current_station !== station && !["paint"].includes(station)) {
+      toast.warning(`${picked.vin} is not at ${stationByCode(station)?.label ?? station} (at ${stationByCode(picked.current_station ?? "")?.label ?? picked.current_station ?? "—"}).`);
+      setBusy(false); return;
+    }
     if (station === "paint" && !color && !picked.actual_color_id) return toast.error("Color required");
     setBusy(true);
     try {
@@ -1208,6 +1217,13 @@ function ShortageStationView() {
     if (!picked) return toast.error("Pick a VIN first");
     const partList = parts.split(",").map(s => s.trim()).filter(Boolean);
     if (partList.length === 0) return toast.error("List at least one part");
+      // Check for existing open shortage
+      const { data: existingShortage } = await supabase.from("shortages")
+        .select("id").eq("vehicle_id", picked.id).eq("status", "open").maybeSingle();
+      if (existingShortage) {
+        toast.warning(`${picked.vin} already has an open shortage. Update it instead.`);
+        return;
+      }
     setBusy(true);
     try {
       const user = (await supabase.auth.getUser()).data.user;
@@ -1293,15 +1309,35 @@ function ShortageStationView() {
           )}
           {picked && shortages.length > 0 && (
             <Card>
-              <CardHeader><CardTitle className="text-sm">Shortage history ({shortages.length})</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-sm">Shortage history ({shortages.length} {shortages.length > 1 ? "cycles" : "cycle"})</CardTitle></CardHeader>
               <CardContent>
                 <ul className="divide-y text-xs">
-                  {shortages.map(s => (
-                    <li key={s.id} className="py-2 flex items-center justify-between">
-                      <div className="min-w-0"><div className="font-mono">{(s.parts as string[]).join(", ")}</div><div className="text-muted-foreground mt-0.5">{s.part_type === "ckd" ? "CKD" : "Local"} · {s.responsibility === "afa" ? "AFA" : "Supplier"}{s.received_by ? ` · Rec: ${s.received_by}` : ""}{s.released_by ? ` · Rel: ${s.released_by}` : ""}</div></div>
-                      <div className="shrink-0 ml-2"><Badge variant={s.status === "open" ? "destructive" : "success"} className="text-[10px] px-1.5">{s.status === "open" ? "OPEN" : "CLEARED"}</Badge></div>
-                    </li>
-                  ))}
+                  {shortages.map((s, idx) => {
+                    const cycleNum = shortages.length - idx;
+                    const prevParts = idx < shortages.length - 1 ? (shortages[idx + 1].parts as string[]) : [];
+                    const currentParts = (s.parts as string[]);
+                    const added = currentParts.filter(p => !prevParts.includes(p));
+                    const removed = prevParts.filter(p => !currentParts.includes(p));
+                    return (
+                      <li key={s.id} className="py-2">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-muted-foreground">Cycle {cycleNum}</span>
+                            <Badge variant={s.status === "open" ? "destructive" : "success"} className="text-[10px] px-1.5">{s.status === "open" ? "OPEN" : "CLEARED"}</Badge>
+                          </div>
+                          <span className="text-muted-foreground">{new Date(s.created_at).toLocaleDateString("en-GB")} {s.cleared_at ? `→ ${new Date(s.cleared_at).toLocaleDateString("en-GB")}` : "(current)"}</span>
+                        </div>
+                        <div className="font-mono">{currentParts.join(", ")}</div>
+                        {(added.length > 0 || removed.length > 0) && (
+                          <div className="flex gap-2 mt-0.5">
+                            {added.length > 0 && <span className="text-red-600">+{added.join(", ")}</span>}
+                            {removed.length > 0 && <span className="text-green-600">-{removed.join(", ")}</span>}
+                          </div>
+                        )}
+                        <div className="text-muted-foreground mt-0.5">{s.part_type === "ckd" ? "CKD" : "Local"} · {s.responsibility === "afa" ? "AFA" : "Supplier"}{s.received_by ? ` · Rec: ${s.received_by}` : ""}{s.released_by ? ` · Rel: ${s.released_by}` : ""}</div>
+                      </li>
+                    );
+                  })}
                 </ul>
               </CardContent>
             </Card>

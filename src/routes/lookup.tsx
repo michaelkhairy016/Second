@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeft, Search } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { findBySuffix, stripVinStars } from "@/lib/vin";
 import { findEngineBySuffix } from "@/lib/engine";
 import type { VehicleSearchResult, EngineSearchResult, Model, ModelTrim } from "@/lib/db-types";
@@ -56,6 +56,8 @@ function VehicleLookup() {
   const [results, setResults] = useState<VehicleSearchResult[]>([]);
   const [selected, setSelected] = useState<VehicleSearchResult | null>(null);
   const [events, setEvents] = useState<{ id: string; station: string; kind: string; color_used_id: string | null; recorded_at: string }[]>([]);
+  const [shortageHistory, setShortageHistory] = useState<{ id: string; parts: string[]; shortage_reason: string | null; status: string; created_at: string; cleared_at: string | null }[]>([]);
+  const [issueHistory, setIssueHistory] = useState<{ id: string; title: string; status: string; station: string; created_at: string }[]>([]);
 
   const handleSearch = async () => {
     const q = query.trim();
@@ -64,17 +66,66 @@ function VehicleLookup() {
     setResults(data);
     setSelected(null);
     setEvents([]);
+    setShortageHistory([]);
+    setIssueHistory([]);
   };
 
   const selectVehicle = async (v: VehicleSearchResult) => {
     setSelected(v);
-    const { data } = await supabase
-      .from("station_events")
-      .select("id, station, kind, color_used_id, recorded_at")
-      .eq("vehicle_id", v.id)
-      .order("recorded_at", { ascending: false })
-      .limit(20);
-    setEvents(data ?? []);
+    const [evRes, shRes, issRes] = await Promise.all([
+      supabase
+        .from("station_events")
+        .select("id, station, kind, color_used_id, recorded_at")
+        .eq("vehicle_id", v.id)
+        .order("recorded_at", { ascending: true }),
+      supabase
+        .from("shortages")
+        .select("id, parts, shortage_reason, status, created_at, cleared_at")
+        .eq("vehicle_id", v.id)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("issues")
+        .select("id, title, status, station, created_at")
+        .eq("vehicle_id", v.id)
+        .order("created_at", { ascending: true }),
+    ]);
+    setEvents((evRes.data ?? []) as typeof events);
+    setShortageHistory((shRes.data ?? []) as typeof shortageHistory);
+    setIssueHistory((issRes.data ?? []) as typeof issueHistory);
+  };
+
+  // Group events by station, pair IN/OUT
+  const stationTimeline = useMemo(() => {
+    const stations: { station: string; inTime: string | null; outTime: string | null; color: string | null }[] = [];
+    const stationMap = new Map<string, { station: string; inTime: string | null; outTime: string | null; color: string | null }>();
+
+    events.forEach(e => {
+      const key = e.station;
+      if (!stationMap.has(key)) {
+        const entry = { station: e.station, inTime: null as string | null, outTime: null as string | null, color: e.color_used_id };
+        stationMap.set(key, entry);
+        stations.push(entry);
+      }
+      const entry = stationMap.get(key)!;
+      if (e.kind === "in") entry.inTime = e.recorded_at;
+      if (e.kind === "out") entry.outTime = e.recorded_at;
+    });
+    return stations;
+  }, [events]);
+
+  const fmtTime = (iso: string | null) => {
+    if (!iso) return "—";
+    return new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  };
+
+  const fmtDuration = (inTime: string | null, outTime: string | null) => {
+    if (!inTime) return "—";
+    const end = outTime ? new Date(outTime).getTime() : Date.now();
+    const ms = end - new Date(inTime).getTime();
+    const hours = Math.floor(ms / 3600000);
+    const mins = Math.floor((ms % 3600000) / 60000);
+    if (hours > 24) return `${(hours / 24).toFixed(1)}d`;
+    return `${hours}h ${mins}m`;
   };
 
   return (
@@ -111,51 +162,107 @@ function VehicleLookup() {
       )}
 
       {selected && (
-        <Card>
-          <CardHeader><CardTitle className="text-base font-mono">{selected.vin}</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <div className="text-xs text-muted-foreground">Current Station</div>
-                <div className="font-medium">{(selected as any).is_archived ? "Archived" : (selected as any).completed_at ? "Completed" : (stationByCode(selected.current_station ?? "")?.label ?? "—")}</div>
+        <div className="space-y-4">
+          <Card>
+            <CardHeader><CardTitle className="text-base font-mono">{selected.vin}</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-muted-foreground">Current Station</div>
+                  <div className="font-medium">{(selected as any).is_archived ? "Archived" : (selected as any).completed_at ? "Completed" : (stationByCode(selected.current_station ?? "")?.label ?? "—")}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Lot tail</div>
+                  <div>{selected.is_lot_tail ? <Badge variant="warning">Yes — {selected.tail_note ?? "Flagged"}</Badge> : <Badge variant="muted">No</Badge>}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Planned color</div>
+                  <div className="font-mono">{selected.planned_color_id ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Actual color</div>
+                  <div className="font-mono">{selected.actual_color_id ?? "—"}</div>
+                </div>
               </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Lot tail</div>
-                <div>{selected.is_lot_tail ? <Badge variant="warning">Yes — {selected.tail_note ?? "Flagged"}</Badge> : <Badge variant="muted">No</Badge>}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Planned color</div>
-                <div className="font-mono">{selected.planned_color_id ?? "—"}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Actual color</div>
-                <div className="font-mono">{selected.actual_color_id ?? "—"}</div>
-              </div>
-            </div>
 
-            <div>
-              <h3 className="text-sm font-medium mb-2">Event history ({events.length})</h3>
-              {events.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No events recorded.</p>
-              ) : (
-                <ul className="divide-y border rounded-md">
-                  {events.map(e => (
-                    <li key={e.id} className="px-3 py-2 flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2">
-                        <Badge variant={e.kind === "in" ? "info" : "success"}>{e.kind.toUpperCase()}</Badge>
-                        <span className="text-muted-foreground">{stationByCode(e.station)?.label ?? e.station}</span>
-                        {e.color_used_id && <Badge variant="secondary">{e.color_used_id}</Badge>}
+              {/* Production Timeline */}
+              <div>
+                <h3 className="text-sm font-medium mb-2">Production Timeline ({stationTimeline.length} stations)</h3>
+                {stationTimeline.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No events recorded.</p>
+                ) : (
+                  <div className="border rounded-md divide-y">
+                    {stationTimeline.map((s, i) => (
+                      <div key={i} className="px-3 py-2 grid grid-cols-4 gap-2 text-xs items-center">
+                        <div className="font-medium">{stationByCode(s.station)?.label ?? s.station}</div>
+                        <div className="text-muted-foreground">
+                          <span className="text-blue-600">IN</span> {fmtTime(s.inTime)}
+                        </div>
+                        <div className="text-muted-foreground">
+                          <span className="text-green-600">OUT</span> {fmtTime(s.outTime) ?? "—"}
+                        </div>
+                        <div className="font-medium text-right">
+                          {fmtDuration(s.inTime, s.outTime)}
+                          {!s.outTime && s.inTime && <span className="text-amber-600 ml-1">(current)</span>}
+                        </div>
                       </div>
-                      <span className="text-xs text-muted-foreground">{new Date(e.recorded_at).toLocaleString()}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <button onClick={() => { setSelected(null); setEvents([]); setShortageHistory([]); setIssueHistory([]); }} className="text-sm text-muted-foreground hover:text-foreground">Back to results</button>
+            </CardContent>
+          </Card>
+
+          {/* Issue History */}
+          {issueHistory.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Issues ({issueHistory.length})</CardTitle></CardHeader>
+              <CardContent>
+                <ul className="divide-y text-xs">
+                  {issueHistory.map(i => (
+                    <li key={i.id} className="py-2 flex items-center justify-between">
+                      <div>
+                        <span className="font-medium">{i.title}</span>
+                        <span className="text-muted-foreground ml-2">at {stationByCode(i.station)?.label ?? i.station}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={i.status === "open" ? "destructive" : "success"} className="text-[10px] px-1.5">{i.status}</Badge>
+                        <span className="text-muted-foreground">{new Date(i.created_at).toLocaleDateString("en-GB")}</span>
+                      </div>
                     </li>
                   ))}
                 </ul>
-              )}
-            </div>
+              </CardContent>
+            </Card>
+          )}
 
-            <button onClick={() => { setSelected(null); setEvents([]); }} className="text-sm text-muted-foreground hover:text-foreground">Back to results</button>
-          </CardContent>
-        </Card>
+          {/* Shortage History */}
+          {shortageHistory.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Shortages ({shortageHistory.length})</CardTitle></CardHeader>
+              <CardContent>
+                <ul className="divide-y text-xs">
+                  {shortageHistory.map(s => (
+                    <li key={s.id} className="py-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{(s.parts as string[]).join(", ")}</span>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={s.status === "open" ? "destructive" : "success"} className="text-[10px] px-1.5">{s.status}</Badge>
+                        </div>
+                      </div>
+                      <div className="text-muted-foreground mt-0.5">
+                        {s.shortage_reason ?? "—"} · Logged {new Date(s.created_at).toLocaleDateString("en-GB")}
+                        {s.cleared_at && ` · Cleared ${new Date(s.cleared_at).toLocaleDateString("en-GB")}`}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+        </div>
       )}
     </div>
   );
