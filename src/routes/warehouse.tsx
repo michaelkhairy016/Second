@@ -20,6 +20,7 @@ import { stripVinStars } from "@/lib/vin";
 import { JobOrderPrintView } from "@/components/JobOrderPrintView";
 import type { Lot, JobOrder, Engine, Model, ModelTrim } from "@/lib/db-types";
 import { useColors } from "@/hooks/use-colors";
+import { useProductionMode } from "@/hooks/use-production-mode";
 
 export const Route = createFileRoute("/warehouse")({
   head: () => ({ meta: [{ title: "Warehouse — AFA Shopfloor" }] }),
@@ -28,6 +29,7 @@ export const Route = createFileRoute("/warehouse")({
 
 function Page() {
   const { hasStation, isSuperuser } = useAuth();
+  const { isLaunchMode } = useProductionMode();
   const nav = useNavigate();
   const { getCode, list: allColors } = useColors();
   useEffect(() => { if (!hasStation("warehouse")) { toast.error("No access"); nav({ to: "/" }); } }, [hasStation, nav]);
@@ -83,36 +85,84 @@ function Page() {
   };
 
   const handleRelease = async (job: JobOrder) => {
-    if (!confirm(`Release job order ${job.job_code}? Vehicles will move to Line Feeding.`)) return;
     const { data: vehicles } = await supabase.from("vehicles")
-      .select("id, lot_id")
+      .select("id, lot_id, is_lot_tail, actual_color_id, planned_color_id")
       .eq("job_order_id", job.id)
       .eq("current_station", "warehouse");
     if (!vehicles || vehicles.length === 0) {
       toast.error("No vehicles at warehouse to release");
       return;
     }
+
+    // Launch Mode: show summary dialog before releasing
+    if (isLaunchMode) {
+      const tailCount = vehicles.filter(v => v.is_lot_tail).length;
+      const lotsInvolved = [...new Set(vehicles.map(v => v.lot_id).filter(Boolean))];
+      const lotNames = lotsInvolved.map(lid => lots.find(l => l.id === lid)?.lot_code ?? lid).join(", ");
+
+      // Color summary
+      const colorCounts: Record<string, number> = {};
+      vehicles.forEach(v => {
+        const cid = v.actual_color_id ?? v.planned_color_id;
+        if (cid) colorCounts[cid] = (colorCounts[cid] ?? 0) + 1;
+        else colorCounts["Unassigned"] = (colorCounts["Unassigned"] ?? 0) + 1;
+      });
+      const colorSummary = Object.entries(colorCounts).map(([cid, cnt]) => `${getCode(cid) ?? cid}: ${cnt}`).join(", ");
+
+      const confirmed = confirm(
+        `Release ${job.job_code}? (${vehicles.length} vehicles)\n\n` +
+        `Tail cars: ${tailCount}\n` +
+        `Lots: ${lotNames}\n` +
+        `Colors: ${colorSummary}\n\n` +
+        `Vehicles will auto-enter WBS.`
+      );
+      if (!confirmed) return;
+    } else {
+      if (!confirm(`Release job order ${job.job_code}? Vehicles will move to Line Feeding.`)) return;
+    }
+
     await supabase.from("job_orders")
       .update({ released_at: new Date().toISOString() })
       .eq("id", job.id);
-    await supabase.from("vehicles")
-      .update({ current_station: "line_feeding" })
-      .in("id", vehicles.map(v => v.id));
+
     const user = (await supabase.auth.getUser()).data.user;
-    const events = vehicles.map(v => ({
-      vehicle_id: v.id,
-      station: "line_feeding" as const,
-      kind: "in" as const,
-      recorded_by: user?.id ?? null,
-    }));
-    await supabase.from("station_events").insert(events);
+
+    if (isLaunchMode) {
+      // Launch Mode: move vehicles directly to WBS + auto-log entry events
+      await supabase.from("vehicles")
+        .update({ current_station: "wbs" })
+        .in("id", vehicles.map(v => v.id));
+      const events = vehicles.map(v => ({
+        vehicle_id: v.id,
+        station: "wbs" as const,
+        kind: "in" as const,
+        recorded_by: user?.id ?? null,
+        source: "auto_launch" as const,
+      }));
+      await supabase.from("station_events").insert(events);
+    } else {
+      await supabase.from("vehicles")
+        .update({ current_station: "line_feeding" })
+        .in("id", vehicles.map(v => v.id));
+      const events = vehicles.map(v => ({
+        vehicle_id: v.id,
+        station: "line_feeding" as const,
+        kind: "in" as const,
+        recorded_by: user?.id ?? null,
+      }));
+      await supabase.from("station_events").insert(events);
+    }
+
     // Decrease producible_units per affected lot
     const lotCounts: Record<string, number> = {};
     vehicles.forEach(v => { if (v.lot_id) lotCounts[v.lot_id] = (lotCounts[v.lot_id] ?? 0) + 1; });
     for (const [lotId, count] of Object.entries(lotCounts)) {
       await supabase.rpc("decrease_producible", { lot_id_input: lotId, count_input: count });
     }
-    toast.success(`Released ${vehicles.length} vehicles to Line Feeding`);
+    toast.success(isLaunchMode
+      ? `Released ${vehicles.length} vehicles — auto-entered WBS`
+      : `Released ${vehicles.length} vehicles to Line Feeding`
+    );
     reload();
   };
 

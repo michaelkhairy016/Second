@@ -2,7 +2,8 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { RequireAuth } from "@/components/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/lib/auth-context";
-import { stationByCode, COLOR_CODES, loadColorMap } from "@/lib/stations";
+import { stationByCode, COLOR_CODES, loadColorMap, LAUNCH_MODE_STATIONS } from "@/lib/stations";
+import { useProductionMode } from "@/hooks/use-production-mode";
 import { useEffect, useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -16,11 +17,12 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { findBySuffix, stripVinStars } from "@/lib/vin";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, ClipboardCheck, FileSpreadsheet, Plus, X, Package, ClipboardPenLine } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, ClipboardCheck, FileSpreadsheet, Plus, X, Package, ClipboardPenLine, PaintBucket } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { StationEventWithVehicle, StationCode, VehicleSearchResult } from "@/lib/db-types";
+import { archiveContractVehicle } from "@/lib/contract-archive";
 import { useColors } from "@/hooks/use-colors";
 
 export const Route = createFileRoute("/station/$code")({
@@ -31,14 +33,19 @@ export const Route = createFileRoute("/station/$code")({
 function StationPage() {
   const { code } = Route.useParams();
   const station = stationByCode(code);
-  const { hasStation, isStaff, isSuperuser } = useAuth();
+  const { hasStation, isStaff, isSuperuser, stations } = useAuth();
+  const { isLaunchMode } = useProductionMode();
   const nav = useNavigate();
   const [autoPicked, setAutoPicked] = useState<VehicleSearchResult | null>(null);
 
   useEffect(() => {
-    if (station && !hasStation(station.code) && !isStaff) { toast.error("You do not have access to this station"); nav({ to: "/" }); }
+    if (station && !hasStation(station.code) && !isStaff && !(station.code === "shortage" && stations.length > 0)) { toast.error("You do not have access to this station"); nav({ to: "/" }); }
     if (station?.code === "warehouse") nav({ to: "/warehouse" });
-  }, [station, hasStation, isStaff, nav]);
+    if (isLaunchMode && !LAUNCH_MODE_STATIONS.includes(code as StationCode)) {
+      toast.error("This station is not available in Launch Mode");
+      nav({ to: "/" });
+    }
+  }, [station, hasStation, isStaff, isLaunchMode, code, nav]);
 
   if (!station || station.code === "warehouse") return null;
 
@@ -55,13 +62,13 @@ function StationPage() {
         </div>
       </div>
 
+      {station.code === "shortage" && <ShortageStationView autoPicked={autoPicked} onAutoPickedConsumed={() => setAutoPicked(null)} />}
       <StationWipSummary station={station.code} onPickVehicle={handlePickFromWip} />
-      <ScanForm station={station.code} autoPicked={autoPicked} onAutoPickedConsumed={() => setAutoPicked(null)} />
+      {station.code !== "shortage" && <ScanForm station={station.code} autoPicked={autoPicked} onAutoPickedConsumed={() => setAutoPicked(null)} />}
       {(isStaff || isSuperuser) && <BulkPasteSection station={station.code as StationCode} />}
       {station.code === "pbs" && <PBSLotSummary />}
       {station.code === "paint" && <PaintWaitingVehicles />}
       {station.code !== "paint" && station.code !== "shortage" && <RecentEvents station={station.code} />}
-      {station.code === "shortage" && <ShortageStationView />}
     </div>
   );
 }
@@ -315,8 +322,8 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
       const { data, error } = await supabase.from("vehicles").insert({
         vin, vin_suffix: s.slice(-5), lot_id: null, job_order_id: null,
         current_station: "wbs", planned_color_id: null, is_lot_tail: false,
-        tail_note: `${model} — Contract`,
-      }).select("id, vin, vin_suffix, planned_color_id, actual_color_id, current_station, lot_id, job_order_id, is_lot_tail, tail_note, completed_at").single();
+        tail_note: `${model} — Contract`, contract_model: model,
+      }).select("id, vin, vin_suffix, planned_color_id, actual_color_id, current_station, lot_id, job_order_id, is_lot_tail, tail_note, contract_model, completed_at").single();
       if (error) throw error;
       setPicked({ ...data, is_archived: false });
       setMatches([]);
@@ -396,7 +403,16 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
         });
         if (error) throw error;
         if (kind === "out") {
-          await supabase.from("vehicles").update({ current_station: "pbs" }).eq("id", picked.id);
+          // Contract vehicles: archive directly (exit factory)
+          if (picked.vin.startsWith("CONTRACT-")) {
+            await archiveContractVehicle(supabase, picked.id, "paint");
+            toast.success(`Archived: ${picked.contract_model ?? "Contract"} — ${picked.vin_suffix}`);
+            setSuffix(""); setPicked(null); setColor("");
+            setBusy(false);
+            return;
+          }
+          // Regular vehicles: advance to TCF (not PBS)
+          await supabase.from("vehicles").update({ current_station: "tcf" }).eq("id", picked.id);
         }
         toast.success(`${kind.toUpperCase()} ${shift}: ${picked.vin}`);
         setSuffix(""); setPicked(null); setColor("");
@@ -422,7 +438,7 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
       const user = (await supabase.auth.getUser()).data.user;
 
       // Post-paint color assignment: save color if selected and vehicle has none
-      if (color && !picked.actual_color_id && postPaintStations.includes(station)) {
+      if (color && !picked.actual_color_id && (postPaintStations.includes(station) || (isLaunchMode && station === "shortage"))) {
         await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked.id);
       }
 
@@ -440,6 +456,15 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
         meta: null,
       });
       if (error) throw error;
+
+      // WBS OUT: Quik 300 contract vehicles auto-archive (electro deposition only)
+      if (kind === "out" && station === "wbs" && picked.vin.startsWith("CONTRACT-") && picked.contract_model === "Quik 300") {
+        await archiveContractVehicle(supabase, picked.id, "wbs");
+        toast.success(`Archived: Quik 300 — ${picked.vin_suffix}`);
+        setSuffix(""); setPicked(null); setColor(""); setIssueText("");
+        setBusy(false);
+        return;
+      }
 
       // Determine next station: only advance for specific OUT flows
       const nextStationMap: Partial<Record<StationCode, StationCode>> = {
@@ -461,9 +486,22 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
   };
 
   const { isStaff: isStaffLocal, isSuperuser: isSuperLocal } = useAuth();
+  const { isLaunchMode } = useProductionMode();
   const needsColor = station === "paint" && !picked?.actual_color_id;
-  const canAssignColor = postPaintStations.includes(station) && picked && !picked.actual_color_id && station !== "paint";
+  const canAssignColor = (postPaintStations.includes(station) || (isLaunchMode && station === "shortage")) && picked && !picked.actual_color_id && station !== "paint";
   const canReassignColor = postPaintStations.includes(station) && picked?.actual_color_id && (isStaffLocal || isSuperLocal) && station !== "paint";
+
+  // Simplified paint for Launch Mode: just record color
+  const submitPaintColor = async () => {
+    if (!picked) return toast.error("Pick a VIN first");
+    if (!color) return toast.error("Select a color");
+    setBusy(true);
+    try {
+      await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked.id);
+      toast.success(`Color recorded: ${picked.vin}`);
+      setSuffix(""); setPicked(null); setColor("");
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
 
   return (
     <Card>
@@ -503,6 +541,12 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
         {picked && (
           <div className="rounded-md border bg-muted/40 p-3 text-sm space-y-1">
             <div className="font-mono text-base">{picked.vin}</div>
+            {picked.contract_model && (
+              <div className="flex items-center gap-1.5 text-xs mt-1">
+                <Badge variant="info">{picked.contract_model}</Badge>
+                <span className="text-muted-foreground">Contract Vehicle</span>
+              </div>
+            )}
             <VehicleColorDisplay vehicle={picked} />
             {lotCode && (
               <div className="flex items-center gap-1.5 text-xs mt-1">
@@ -580,7 +624,11 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
         )}
 
         <div className="flex gap-2 pt-1">
-          {station === "paint" ? (
+          {station === "paint" && isLaunchMode ? (
+            <Button disabled={!picked || busy || !color} className="flex-1" onClick={submitPaintColor}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><PaintBucket className="h-4 w-4 mr-1" /> Record Color</>}
+            </Button>
+          ) : station === "paint" ? (
             <>
               <div className="flex items-center gap-1.5 mr-2">
                 <Label className="text-xs whitespace-nowrap">Shift:</Label>
@@ -613,7 +661,7 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
 interface WipVehicle {
   id: string; vin: string; vin_suffix: string; current_station: string | null;
   planned_color_id: string | null; actual_color_id: string | null;
-  lot_id: string | null; is_lot_tail: boolean; tail_note: string | null; job_order_id: string | null;
+  lot_id: string | null; is_lot_tail: boolean; tail_note: string | null; job_order_id: string | null; contract_model: string | null;
   lot: { lot_code: string; model: string } | null;
   hasOpenIssue: boolean;
 }
@@ -631,7 +679,7 @@ function StationWipSummary({ station, onPickVehicle }: { station: StationCode; o
     setLoading(true);
     const stations = [station];
     const [vRes, iRes] = await Promise.all([
-      supabase.from("vehicles").select("id, vin, vin_suffix, current_station, planned_color_id, actual_color_id, lot_id, is_lot_tail, tail_note, job_order_id, lot:lots(lot_code, model)").in("current_station", stations),
+      supabase.from("vehicles").select("id, vin, vin_suffix, current_station, planned_color_id, actual_color_id, lot_id, is_lot_tail, tail_note, job_order_id, contract_model, lot:lots(lot_code, model)").in("current_station", stations),
       supabase.from("issues").select("vehicle_id").in("status", ["open", "in_progress"]),
     ]);
     const issueSet = new Set((iRes.data ?? []).map(i => i.vehicle_id));
@@ -671,7 +719,7 @@ function StationWipSummary({ station, onPickVehicle }: { station: StationCode; o
 
   const grouped = new Map<string, { ok: WipVehicle[]; issue: WipVehicle[]; lotCodes: Set<string> }>();
   vehicles.forEach(v => {
-    const model = v.lot?.model ?? "Unknown";
+    const model = v.contract_model ?? v.lot?.model ?? "Unknown";
     if (!grouped.has(model)) grouped.set(model, { ok: [], issue: [], lotCodes: new Set() });
     if (v.lot?.lot_code) grouped.get(model)!.lotCodes.add(v.lot.lot_code);
     if (v.hasOpenIssue) grouped.get(model)!.issue.push(v); else grouped.get(model)!.ok.push(v);
@@ -761,7 +809,7 @@ function StationWipSummary({ station, onPickVehicle }: { station: StationCode; o
                   <div className="min-w-0">
                     <div className="font-mono text-xs">{v.vin}</div>
                     <div className="text-xs text-muted-foreground mt-0.5">
-                      {v.lot?.model ?? "—"} · {getCode(v.actual_color_id ?? v.planned_color_id) ?? "No color"}
+                      {v.contract_model ?? v.lot?.model ?? "—"} · {getCode(v.actual_color_id ?? v.planned_color_id) ?? "No color"}
                       {station === "paint" && v.current_station !== "paint" && (
                         <span className="ml-1 text-warning">({stationByCode(v.current_station as StationCode)?.label ?? v.current_station})</span>
                       )}
@@ -813,7 +861,7 @@ function StockCountButton({ vehicles, getCode }: { vehicles: WipVehicle[]; getCo
                   />
                   <div className="min-w-0 flex-1">
                     <div className="font-mono text-xs">{v.vin}</div>
-                    <div className="text-xs text-muted-foreground">{v.lot?.model ?? "—"} · {getCode(v.actual_color_id ?? v.planned_color_id) ?? "No color"}</div>
+                    <div className="text-xs text-muted-foreground">{v.contract_model ?? v.lot?.model ?? "—"} · {getCode(v.actual_color_id ?? v.planned_color_id) ?? "No color"}</div>
                   </div>
                 </li>
               ))}
@@ -843,7 +891,7 @@ function StockCountButton({ vehicles, getCode }: { vehicles: WipVehicle[]; getCo
                 <p className="text-xs font-medium text-destructive mb-2">Unchecked vehicles (potentially missing):</p>
                 <ul className="divide-y border rounded-md">
                   {vehicles.filter(v => !checked.get(v.id)).map(v => (
-                    <li key={v.id} className="px-3 py-1.5 text-xs font-mono">{v.vin} <span className="text-muted-foreground font-sans">— {v.lot?.model ?? "Unknown"}</span></li>
+                    <li key={v.id} className="px-3 py-1.5 text-xs font-mono">{v.vin} <span className="text-muted-foreground font-sans">— {v.contract_model ?? v.lot?.model ?? "Unknown"}</span></li>
                   ))}
                 </ul>
               </div>
@@ -1162,7 +1210,7 @@ interface ShortageRecord {
   cleared_at: string | null;
 }
 
-function ShortageStationView() {
+function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?: VehicleSearchResult | null; onAutoPickedConsumed?: () => void }) {
   const [suffix, setSuffix] = useState("");
   const debouncedSuffix = useDebouncedValue(suffix, 300);
   const [matches, setMatches] = useState<Awaited<ReturnType<typeof findBySuffix>>>([]);
@@ -1170,12 +1218,26 @@ function ShortageStationView() {
   const [mode, setMode] = useState<"in" | "out">("in");
   const [parts, setParts] = useState("");
   const [notes, setNotes] = useState("");
-  const [partType, setPartType] = useState<"ckd" | "local">("ckd");
+  const [partType, setPartType] = useState<"ckd" | "local" | "plastics">("ckd");
   const [responsibility, setResponsibility] = useState<"afa" | "supplier">("supplier");
+  const [shortageReason, setShortageReason] = useState("ckd");
   const [receivedBy, setReceivedBy] = useState("");
   const [shortages, setShortages] = useState<ShortageRecord[]>([]);
   const [stationVehicles, setStationVehicles] = useState<Array<{ vin: string; vin_suffix: string; id: string }>>([]);
   const [busy, setBusy] = useState(false);
+
+  // Consume auto-picked vehicle from WIP summary
+  useEffect(() => {
+    if (autoPicked) {
+      setPicked(autoPicked as any);
+      setSuffix(autoPicked.vin_suffix);
+      setMatches([]);
+      // Auto-detect mode based on current station
+      if (autoPicked.current_station === "shortage") setMode("out");
+      else setMode("in");
+      onAutoPickedConsumed?.();
+    }
+  }, [autoPicked]);
 
   useEffect(() => {
     if (debouncedSuffix.trim().length < 3) { setMatches([]); return; }
@@ -1211,7 +1273,7 @@ function ShortageStationView() {
   };
   useEffect(() => { loadStationVehicles(); }, []);
 
-  const resetScan = () => { setSuffix(""); setPicked(null); setMatches([]); setParts(""); setNotes(""); setPartType("ckd"); setResponsibility("supplier"); setReceivedBy(""); };
+  const resetScan = () => { setSuffix(""); setPicked(null); setMatches([]); setParts(""); setNotes(""); setPartType("ckd"); setResponsibility("supplier"); setReceivedBy(""); setShortageReason("ckd"); };
 
   const submitIn = async () => {
     if (!picked) return toast.error("Pick a VIN first");
@@ -1227,7 +1289,7 @@ function ShortageStationView() {
     setBusy(true);
     try {
       const user = (await supabase.auth.getUser()).data.user;
-      const { error: se } = await supabase.from("shortages").insert({ vehicle_id: picked.id, parts: partList, notes: notes || null, created_by: user?.id, part_type: partType, responsibility, received_by: receivedBy || null });
+      const { error: se } = await supabase.from("shortages").insert({ vehicle_id: picked.id, parts: partList, notes: notes || null, created_by: user?.id, part_type: partType, responsibility, received_by: receivedBy || null, shortage_reason: shortageReason });
       if (se) throw se;
       const { error: ev } = await supabase.from("station_events").insert({ vehicle_id: picked.id, station: "shortage", kind: "in", recorded_by: user?.id, source: "manual" });
       if (ev) throw ev;
@@ -1246,6 +1308,8 @@ function ShortageStationView() {
       if (se) throw se;
       const { error: ev } = await supabase.from("station_events").insert({ vehicle_id: picked.id, station: "shortage", kind: "out", recorded_by: user?.id, source: "manual" });
       if (ev) throw ev;
+      // Move vehicle out of shortage station back to PBS flow
+      await supabase.from("vehicles").update({ current_station: "waiting_repair" }).eq("id", picked.id).eq("current_station", "shortage");
       toast.success("Shortage cleared");
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
@@ -1276,7 +1340,17 @@ function ShortageStationView() {
               <Label className="text-sm font-medium">Log new shortage</Label>
               <div className="space-y-1.5"><Label>Missing parts (comma-separated)</Label><Input value={parts} onChange={e => setParts(e.target.value)} placeholder="exhaust pipe, rear wiper / قطعة غيار" /></div>
               <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5"><Label>Part type</Label><div className="flex gap-2"><button type="button" onClick={() => setPartType("ckd")} className={`flex-1 py-2 rounded-md border text-sm font-medium ${partType === "ckd" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>CKD</button><button type="button" onClick={() => setPartType("local")} className={`flex-1 py-2 rounded-md border text-sm font-medium ${partType === "local" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>Local</button></div></div>
+                <div className="space-y-1.5"><Label>Shortage Reason</Label>
+                  <select value={shortageReason} onChange={e => { setShortageReason(e.target.value); setPartType(e.target.value === "plastics" || e.target.value === "missing_plastics" ? "plastics" : e.target.value === "local" || e.target.value === "general_missing" || e.target.value === "unavailable_factory" ? "local" : "ckd"); }} className="w-full border rounded-md px-2 py-1.5 text-sm bg-background">
+                    <option value="ckd">CKD</option>
+                    <option value="local">Local</option>
+                    <option value="unavailable_factory">Unavailable in Factory</option>
+                    <option value="missing_plastics">Missing (Plastics Paint Shop)</option>
+                    <option value="missing_paint_miscolored">Scratches (Paint Shop)</option>
+                    <option value="general_missing">General Missing</option>
+                    <option value="plastics">Plastics</option>
+                  </select>
+                </div>
                 <div className="space-y-1.5"><Label>Responsibility</Label><div className="flex gap-2"><button type="button" onClick={() => setResponsibility("afa")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "afa" ? "bg-warning/20 border-warning text-warning" : "bg-muted border-border"}`}>Against AFA</button><button type="button" onClick={() => setResponsibility("supplier")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "supplier" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>Against Supplier</button></div></div>
               </div>
               <div className="space-y-1.5"><Label>Received by (name)</Label><Input value={receivedBy} onChange={e => setReceivedBy(e.target.value)} placeholder="اسم المستلم / Person who delivered" /></div>

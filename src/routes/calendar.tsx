@@ -25,12 +25,14 @@ function CalendarPage() {
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
 
+  const toLocalDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+
   const fetchCalendarData = async (start: Date, end: Date) => {
     const { data, error } = await supabase
       .from("factory_calendar")
       .select("id,date,working_hours,is_working_day,notes")
-      .gte("date", start.toISOString().split("T")[0])
-      .lte("date", end.toISOString().split("T")[0]);
+      .gte("date", toLocalDate(start))
+      .lte("date", toLocalDate(end));
 
     if (data && !error) {
       const mapped: Record<string, CalendarDay> = {};
@@ -102,7 +104,7 @@ function CalendarPage() {
 
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(year, month, day);
-      const dateStr = date.toISOString().split("T")[0];
+      const dateStr = toLocalDate(date);
       const dayOfWeek = date.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
       const isWorking = dayOfWeek >= 0 && dayOfWeek <= 4; // Sun-Thu
 
@@ -129,7 +131,7 @@ function CalendarPage() {
 
   const renderDay = (day: number) => {
     const date = new Date(year, month, day);
-    const dateStr = date.toISOString().split("T")[0];
+    const dateStr = toLocalDate(date);
     const dayData = calendarData[dateStr];
     const isWorking = dayData?.is_working_day ?? true;
     const hours = dayData?.working_hours ?? 8;
@@ -209,8 +211,8 @@ function CalendarPage() {
         <CardHeader className="flex flex-row items-center justify-between pb-3">
           <CardTitle className="text-xl">Factory Calendar</CardTitle>
           <div className="flex items-center gap-2">
-            <Badge variant={calendarData[new Date().toISOString().split("T")[0]]?.is_working_day ? "default" : "secondary"} className="bg-green-500/20 text-green-400 border-green-500/30">
-              Today: {calendarData[new Date().toISOString().split("T")[0]]?.is_working_day ? "Working" : "Off"}
+            <Badge variant={calendarData[toLocalDate(new Date())]?.is_working_day ? "default" : "secondary"} className="bg-green-500/20 text-green-400 border-green-500/30">
+              Today: {calendarData[toLocalDate(new Date())]?.is_working_day ? "Working" : "Off"}
             </Badge>
           </div>
         </CardHeader>

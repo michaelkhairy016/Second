@@ -3,8 +3,10 @@ import { RequireAuth } from "@/components/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/lib/auth-context";
 import { useEffect, useState } from "react";
-import { stationByCode } from "@/lib/stations";
+import { stationByCode, LAUNCH_MODE_STATIONS } from "@/lib/stations";
+import { useProductionMode } from "@/hooks/use-production-mode";
 import { stripVinStars } from "@/lib/vin";
+import { archiveContractVehicle } from "@/lib/contract-archive";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -51,8 +53,15 @@ function Page() {
   const { code } = Route.useParams();
   const station = stationByCode(code);
   const { isStaff, isSuperuser } = useAuth();
+  const { isLaunchMode } = useProductionMode();
   const nav = useNavigate();
   useEffect(() => { if (!(isStaff || isSuperuser)) { toast.error("Staff only"); nav({ to: "/" }); } }, [isStaff, isSuperuser, nav]);
+  useEffect(() => {
+    if (isLaunchMode && !LAUNCH_MODE_STATIONS.includes(code as StationCode)) {
+      toast.error("Not available in Launch Mode");
+      nav({ to: "/" });
+    }
+  }, [isLaunchMode, code, nav]);
 
   const [text, setText] = useState("");
   const [kind, setKind] = useState<"in" | "out">("in");
@@ -233,21 +242,25 @@ function Page() {
           const contractVins = atStation.filter(v => v.vin.startsWith("CONTRACT-"));
           const regularVins = atStation.filter(v => !v.vin.startsWith("CONTRACT-"));
 
-          // Contract vehicles: exit facility (mark completed)
+          // Contract vehicles: archive each one
           if (contractVins.length > 0) {
-            const contractUpdate: any = { current_station: "completed" as any, completed_at: new Date().toISOString() };
             // Assign color to contract cars missing it
-            const uncolored = contractVins.filter(v => !v.actualColorId);
-            if (bulkColor && uncolored.length > 0) {
-              contractUpdate.actual_color_id = bulkColor;
+            if (bulkColor) {
+              const uncolored = contractVins.filter(v => !v.actualColorId);
+              if (uncolored.length > 0) {
+                await supabase.from("vehicles").update({ actual_color_id: bulkColor }).in("id", uncolored.map(m => m.id));
+              }
             }
-            await supabase.from("vehicles").update(contractUpdate).in("id", contractVins.map(m => m.id));
+            // Archive each contract vehicle
+            for (const cv of contractVins) {
+              await archiveContractVehicle(supabase, cv.id, station.code as "wbs" | "paint");
+            }
           }
 
           // Regular vehicles: advance to next station
           if (regularVins.length > 0) {
             const nextStationMap: Partial<Record<StationCode, StationCode>> = {
-              wbs: "paint", paint: "pbs", pbs: "tcf", tcf: "waiting_repair", waiting_repair: "repair", repair: "cs",
+              wbs: "paint", paint: "tcf", pbs: "tcf", tcf: "waiting_repair", waiting_repair: "repair", repair: "cs",
             };
             const nextStation = nextStationMap[station.code as StationCode];
             if (nextStation) {
@@ -263,9 +276,10 @@ function Page() {
         const missing = pendingVins.filter(v => !v.found);
         const contractOut = atStation.filter(v => v.vin.startsWith("CONTRACT-")).length;
         const regularOut = atStation.length - contractOut;
+        const nextLabel = station.code === "paint" ? "TCF" : station.code === "wbs" ? "Paint" : "next station";
         setReport({ matched: matched.length, missing: missing.map(v => v.raw) });
         setDialogOpen(false);
-        toast.success(`Released: ${regularOut} to PBS${contractOut > 0 ? `, ${contractOut} contract exited` : ""}${notAtStation.length > 0 ? ` (${notAtStation.length} not at ${station.label})` : ""}`);
+        toast.success(`Released: ${regularOut} to ${nextLabel}${contractOut > 0 ? `, ${contractOut} contract archived` : ""}${notAtStation.length > 0 ? ` (${notAtStation.length} not at ${station.label})` : ""}`);
       }
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };

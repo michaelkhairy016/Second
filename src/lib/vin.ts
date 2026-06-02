@@ -9,7 +9,7 @@ export async function findBySuffix(suffix: string) {
   if (s.length < 3) return [];
   const { data, error } = await supabase
     .from("vehicles")
-    .select("id, vin, vin_suffix, planned_color_id, actual_color_id, current_station, lot_id, job_order_id, is_lot_tail, tail_note, completed_at")
+    .select("id, vin, vin_suffix, planned_color_id, actual_color_id, current_station, lot_id, job_order_id, is_lot_tail, tail_note, contract_model, completed_at")
     .ilike("vin_suffix", `%${s.slice(-5)}`)
     .limit(10);
   if (error) throw error;
@@ -37,6 +37,7 @@ export async function findBySuffix(suffix: string) {
     job_order_id: null,
     is_lot_tail: false,
     tail_note: null,
+    contract_model: null as string | null,
     completed_at: a.archived_at,
     is_archived: true,
     lot_model: a.lot_model,

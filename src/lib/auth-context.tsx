@@ -12,6 +12,7 @@ interface AuthState {
   displayName: string | null;
   roles: AppRole[];
   stations: StationCode[];
+  dashboardAllowed: boolean;
   isSuperuser: boolean;
   isStaff: boolean;
   isTechnician: boolean;
@@ -29,15 +30,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [stations, setStations] = useState<StationCode[]>([]);
+  const [dashboardAllowed, setDashboardAllowed] = useState(true);
   const [ready, setReady] = useState(false);
 
   const loadProfile = async (uid: string) => {
     const [{ data: prof }, { data: rs }, { data: st }] = await Promise.all([
-      supabase.from("profiles").select("display_name").eq("id", uid).maybeSingle(),
+      supabase.from("profiles").select("display_name, dashboard_allowed").eq("id", uid).maybeSingle(),
       supabase.from("user_roles").select("role").eq("user_id", uid),
       supabase.from("station_assignments").select("station").eq("user_id", uid),
     ]);
     setDisplayName(prof?.display_name ?? null);
+    setDashboardAllowed(prof?.dashboard_allowed ?? true);
     setRoles((rs?.map(r => r.role as AppRole)) ?? []);
     setStations((st?.map(r => r.station as StationCode)) ?? []);
   };
@@ -57,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value: AuthState = {
-    ready, user, session, displayName, roles, stations,
+    ready, user, session, displayName, roles, stations, dashboardAllowed,
     isSuperuser: roles.includes("superuser"),
     isStaff: roles.includes("staff"),
     isTechnician: roles.includes("technician"),

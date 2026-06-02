@@ -14,9 +14,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { EmptyState } from "@/components/EmptyState";
-import { Palette, Car, Plus, Pencil, Trash2, Loader2, ChevronDown, ChevronRight, FileText, CalendarDays } from "lucide-react";
+import { Palette, Car, Plus, Pencil, Trash2, Loader2, ChevronDown, ChevronRight, FileText, CalendarDays, Rocket } from "lucide-react";
 import { toast } from "sonner";
 import type { StandardColor, Model, ModelTrim, ModelWithTrims, ProductionPlan } from "@/lib/db-types";
+import { useProductionMode } from "@/hooks/use-production-mode";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({ meta: [{ title: "Settings — AFA Shopfloor" }] }),
@@ -37,11 +38,13 @@ function Page() {
           <TabsTrigger value="models"><Car className="h-4 w-4 mr-1.5" />Models</TabsTrigger>
           <TabsTrigger value="reports"><FileText className="h-4 w-4 mr-1.5" />Reports</TabsTrigger>
           <TabsTrigger value="plan"><CalendarDays className="h-4 w-4 mr-1.5" />Prod. Plan</TabsTrigger>
+          <TabsTrigger value="launchmode"><Rocket className="h-4 w-4 mr-1.5" />Launch Mode</TabsTrigger>
         </TabsList>
         <TabsContent value="colors" className="mt-4"><ColorsTab /></TabsContent>
         <TabsContent value="models" className="mt-4"><ModelsTab /></TabsContent>
         <TabsContent value="reports" className="mt-4"><ReportsTab /></TabsContent>
         <TabsContent value="plan" className="mt-4"><ProductionPlanTab /></TabsContent>
+        <TabsContent value="launchmode" className="mt-4"><LaunchModeTab /></TabsContent>
       </Tabs>
     </div>
   );
@@ -470,6 +473,92 @@ function ReportsTab() {
       <div className="flex justify-end">
         <Button onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Settings"}</Button>
       </div>
+    </div>
+  );
+}
+
+/* ─── Launch Mode Tab ─── */
+
+function LaunchModeTab() {
+  const { mode, isLaunchMode } = useProductionMode();
+  const [busy, setBusy] = useState(false);
+
+  const toggle = async () => {
+    const newMode = isLaunchMode ? "detailed" : "launch";
+    setBusy(true);
+    try {
+      const { error } = await supabase
+        .from("app_settings")
+        .upsert({ key: "production_mode", value: { mode: newMode } });
+      if (error) throw error;
+      toast.success(newMode === "launch" ? "Launch Mode enabled" : "Detailed Mode restored");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const hiddenStations = ["Body Shop", "Line Feeding", "TCF", "Waiting Repair", "Repair", "CS / QC", "PDI", "TCF Offline"];
+  const visibleStations = ["Warehouse", "WBS", "Paint (color only)", "PBS", "Shortage (+ Buffer)"];
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center justify-between">
+            <span>Production Mode</span>
+            <div className="flex items-center gap-3">
+              <span className={`text-sm font-medium ${!isLaunchMode ? "text-primary" : "text-muted-foreground"}`}>Detailed</span>
+              <Switch checked={isLaunchMode} onCheckedChange={toggle} disabled={busy} />
+              <span className={`text-sm font-medium ${isLaunchMode ? "text-warning" : "text-muted-foreground"}`}>Launch</span>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {isLaunchMode && (
+            <div className="rounded-md border border-warning/30 bg-warning/5 p-3">
+              <p className="text-sm font-medium text-warning">Launch Mode is active for all users</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Staff see only capture-point stations. Hidden stations still store data and resume when switching back.
+              </p>
+            </div>
+          )}
+          {!isLaunchMode && (
+            <div className="rounded-md border bg-muted/30 p-3">
+              <p className="text-sm font-medium">Detailed Mode — full production flow visible</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                All stations visible. This is the default mode.
+              </p>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-4 mt-3">
+            <div>
+              <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">Visible in Launch Mode</p>
+              <ul className="space-y-1">
+                {visibleStations.map(s => (
+                  <li key={s} className="text-sm flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-success" />
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">Hidden in Launch Mode</p>
+              <ul className="space-y-1">
+                {hiddenStations.map(s => (
+                  <li key={s} className="text-sm flex items-center gap-2 text-muted-foreground">
+                    <span className="h-2 w-2 rounded-full bg-destructive" />
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

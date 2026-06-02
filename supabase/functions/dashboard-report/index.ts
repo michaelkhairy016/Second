@@ -46,6 +46,44 @@ function getCategoryForShortage(s: any): string {
   return s.part_type === "ckd" ? "CKD" : "Local";
 }
 
+// --- Arabic font support ---
+let cachedFontBase64: string | null = null;
+
+function hasArabic(text: string): boolean {
+  return /[؀-ۿݐ-ݿࢠ-ࣿ]/.test(text);
+}
+
+async function loadArabicFont(doc: any): Promise<boolean> {
+  if (cachedFontBase64 !== null) {
+    if (cachedFontBase64 === "") return false;
+    doc.addFileToVFS("Amiri.ttf", cachedFontBase64);
+    doc.addFont("Amiri.ttf", "Amiri", "normal");
+    return true;
+  }
+  try {
+    const fontRes = await fetch("https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/amiri/Amiri-Regular.ttf");
+    if (!fontRes.ok) { cachedFontBase64 = ""; return false; }
+    const fontBuffer = await fontRes.arrayBuffer();
+    let binary = "";
+    const bytes = new Uint8Array(fontBuffer);
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    cachedFontBase64 = btoa(binary);
+    doc.addFileToVFS("Amiri.ttf", cachedFontBase64);
+    doc.addFont("Amiri.ttf", "Amiri", "normal");
+    return true;
+  } catch (e) {
+    console.error("Font load error:", e);
+    cachedFontBase64 = "";
+    return false;
+  }
+}
+
+// Arabic text passthrough — rely on PDF viewer bidi for RTL
+// jsPDF can't do OpenType shaping, so letters render disconnected
+// but modern viewers (Chrome, Acrobat) handle bidi automatically
+
+// --- End Arabic support ---
+
 function drawBarChart(doc: any, x: number, y: number, w: number, h: number, data: { label: string; value: number; color: number[] }[]) {
   const maxVal = Math.max(...data.map(d => d.value), 1);
   const barHeight = Math.min(12, (h - 10) / data.length);
@@ -56,17 +94,14 @@ function drawBarChart(doc: any, x: number, y: number, w: number, h: number, data
     const barY = y + i * (barHeight + 3);
     const barW = (d.value / maxVal) * barMaxWidth;
 
-    // Label
     doc.setFontSize(8);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(80, 80, 80);
     doc.text(d.label, x, barY + barHeight / 2 + 1, { baseline: "middle" });
 
-    // Bar
     doc.setFillColor(d.color[0], d.color[1], d.color[2]);
     doc.roundedRect(x + labelWidth, barY + 1, barW, barHeight - 2, 1.5, 1.5, "F");
 
-    // Value
     doc.setTextColor(50, 50, 50);
     doc.setFont("helvetica", "bold");
     doc.text(String(d.value), x + labelWidth + barW + 2, barY + barHeight / 2 + 1, { baseline: "middle" });
@@ -109,7 +144,7 @@ Deno.serve(async (req: Request) => {
     const lotMap: Record<string, string> = {};
     (lotsData ?? []).forEach((l: any) => { lotMap[l.id] = l.model; });
 
-    // 2b. Job order → model fallback (for multi-lot job orders where vehicle.lot_id is null)
+    // 2b. Job order → model fallback
     const { data: jolData } = await sb.from("job_order_lots").select("job_order_id, lot_id");
     const joModelMap: Record<string, string> = {};
     (jolData ?? []).forEach((jol: any) => {
@@ -130,7 +165,7 @@ Deno.serve(async (req: Request) => {
       else if (v.job_order_id && joModelMap[v.job_order_id]) v.lot_model = joModelMap[v.job_order_id];
     });
 
-    // 5. Entry times — earliest IN event at current station
+    // 5. Entry times
     if (vehicleIds.length > 0) {
       const { data: entryEvents } = await sb
         .from("station_events")
@@ -168,7 +203,7 @@ Deno.serve(async (req: Request) => {
     const carsIn = (todayEvents ?? []).filter((e: any) => e.kind === "in" && config.stations.includes(e.station)).length;
     const carsOut = (todayEvents ?? []).filter((e: any) => e.kind === "out" && config.stations.includes(e.station)).length;
 
-    // 8. Delayed WIP (entry > 24h ago)
+    // 8. Delayed WIP
     const now = new Date();
     const delayedWip = wipVehicles.filter(v => {
       if (!v.entry_time) return false;
@@ -180,22 +215,25 @@ Deno.serve(async (req: Request) => {
     let categories: { name: string; vehicles: typeof wipVehicles }[] = [];
 
     if (m === "shortage") {
-      // Shortages: fetch open shortage records
       const { data: shortagesData } = await sb
         .from("shortages")
         .select("id, vehicle_id, parts, shortage_reason, part_type, notes, status, created_at")
         .eq("status", "open");
       const shortages = shortagesData ?? [];
 
-      // Build category map
       const catMap: Record<string, typeof wipVehicles> = {};
       const catOrder = ["PLASTICS PART", "Local", "CKD", "Scratches"];
       catOrder.forEach(c => { catMap[c] = []; });
 
+      // Deduplicate: one shortage per vehicle to prevent double-counting
+      const vShortageMap = new Map<string, any>();
       shortages.forEach((s: any) => {
-        const cat = getCategoryForShortage(s);
-        const v = wipVehicles.find(wv => wv.id === s.vehicle_id);
-        if (v) {
+        if (!vShortageMap.has(s.vehicle_id)) vShortageMap.set(s.vehicle_id, s);
+      });
+      wipVehicles.forEach(v => {
+        const s = vShortageMap.get(v.id);
+        if (s) {
+          const cat = getCategoryForShortage(s);
           (v as any).issue = (s.parts as string[] || []).join(", ") || s.notes || "";
           (v as any).entry_time = s.created_at;
           if (!catMap[cat]) catMap[cat] = [];
@@ -206,7 +244,6 @@ Deno.serve(async (req: Request) => {
         if (catMap[c] && catMap[c].length > 0) categories.push({ name: c, vehicles: catMap[c] });
       });
     } else if (m === "pbs") {
-      // PBS: categorize by issue type
       const catMap: Record<string, typeof wipVehicles> = {};
       const catOrder = ["No Issue", "CKD", "Local", "Plastics", "Dismantled"];
       catOrder.forEach(c => { catMap[c] = []; });
@@ -228,7 +265,6 @@ Deno.serve(async (req: Request) => {
         if (catMap[c] && catMap[c].length > 0) categories.push({ name: c, vehicles: catMap[c] });
       });
     } else {
-      // WBS: Issue vs OK
       const catMap: Record<string, typeof wipVehicles> = { "Issue": [], "OK": [] };
       wipVehicles.forEach(v => {
         const issues = issueMap[v.id] || [];
@@ -247,13 +283,14 @@ Deno.serve(async (req: Request) => {
     const pageHeight = doc.internal.pageSize.getHeight();
     let y = 15;
 
-    // Helper: check page break
+    // Load Arabic font
+    const hasArabicFont = await loadArabicFont(doc);
+
     const needSpace = (mm: number) => {
       if (y + mm > pageHeight - 15) { doc.addPage(); y = 15; }
     };
 
     // === HEADER ===
-    // Left: report title + company
     doc.setFontSize(16);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(30, 41, 59);
@@ -264,7 +301,6 @@ Deno.serve(async (req: Request) => {
     doc.setTextColor(71, 85, 105);
     doc.text("Aboul Fotouh Automotive", 14, y);
     y += 5;
-    // Right: MPC Department + Production Planning Section
     doc.setFontSize(9);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(30, 58, 138);
@@ -272,7 +308,6 @@ Deno.serve(async (req: Request) => {
     doc.setFont("helvetica", "normal");
     doc.setTextColor(71, 85, 105);
     doc.text("Production Planning Section", pageWidth - 14, y - 6, { align: "right" });
-    // Divider
     doc.setDrawColor(226, 232, 240);
     doc.setLineWidth(0.5);
     doc.line(14, y, pageWidth - 14, y);
@@ -295,18 +330,14 @@ Deno.serve(async (req: Request) => {
     const cardW = (pageWidth - 40) / 4;
     kpis.forEach((kpi, i) => {
       const cx = 14 + i * (cardW + 4);
-      // Border left
       doc.setFillColor(kpi.color[0], kpi.color[1], kpi.color[2]);
       doc.rect(cx, y, 2, 20, "F");
-      // Background
       doc.setFillColor(248, 250, 252);
       doc.rect(cx + 2, y, cardW - 2, 20, "F");
-      // Label
       doc.setFontSize(8);
       doc.setFont("helvetica", "bold");
       doc.setTextColor(71, 85, 105);
       doc.text(kpi.label.toUpperCase(), cx + 6, y + 7);
-      // Value
       doc.setFontSize(18);
       doc.setTextColor(30, 41, 59);
       doc.text(String(kpi.value), cx + 6, y + 16);
@@ -380,11 +411,19 @@ Deno.serve(async (req: Request) => {
         styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" },
         headStyles: { fillColor: config.color, textColor: 255, fontSize: 8 },
         columnStyles: {
-          0: { cellWidth: 50 },   // VIN
-          1: { cellWidth: 25 },   // Model
-          2: { cellWidth: 15 },   // Color
-          3: { cellWidth: 120 },  // Issue
-          4: { cellWidth: 38 },   // Entry Time
+          0: { cellWidth: 50 },
+          1: { cellWidth: 25 },
+          2: { cellWidth: 15 },
+          3: { cellWidth: 120 },
+          4: { cellWidth: 38 },
+        },
+        didParseCell: (data: any) => {
+          if (hasArabicFont && data.section === "body" && data.column.index === 3) {
+            const cellText = data.cell.raw;
+            if (cellText && hasArabic(cellText)) {
+              data.cell.styles.font = "Amiri";
+            }
+          }
         },
       });
       y = (doc as any).lastAutoTable.finalY + 8;
@@ -399,7 +438,7 @@ Deno.serve(async (req: Request) => {
       doc.setTextColor(148, 163, 184);
       doc.text(`AFA Shopfloor — ${config.title} — Generated ${ts}`, 14, pageHeight - 7);
       doc.text(`Page ${i} of ${pageCount}`, pageWidth - 14, pageHeight - 7, { align: "right" });
-      doc.text("Created By Eng. Waleed Mohamed - Planning Section", pageWidth / 2, pageHeight - 3, { align: "center" });
+      doc.text("Created By Michael Amgad Khairy - Planning Section", pageWidth / 2, pageHeight - 3, { align: "center" });
     }
 
     const pdfBytes = doc.output("arraybuffer");

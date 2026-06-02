@@ -31,6 +31,13 @@ export const STATIONS: StationDef[] = [
 
 export const stationByCode = (c: string) => STATIONS.find(s => s.code === c);
 
+export const LAUNCH_MODE_STATIONS: StationCode[] = ["warehouse", "wbs", "paint", "pbs", "shortage"];
+
+export function getVisibleStations(isLaunchMode: boolean): StationDef[] {
+  if (!isLaunchMode) return STATIONS;
+  return STATIONS.filter(s => LAUNCH_MODE_STATIONS.includes(s.code));
+}
+
 export const COLOR_CODES: Record<string, string> = {
   "11U": "White",
   "22U": "Silver",

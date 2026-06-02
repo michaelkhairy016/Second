@@ -1,8 +1,9 @@
-import { STATIONS, type StationDef } from "@/lib/stations";
+import { STATIONS, type StationDef, LAUNCH_MODE_STATIONS } from "@/lib/stations";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { ChevronRight, Link2 } from "lucide-react";
 import type { StationCode } from "@/lib/db-types";
+import { useProductionMode } from "@/hooks/use-production-mode";
 
 export interface FlowStep {
   key: string;
@@ -26,23 +27,32 @@ const MAIN_FLOW_CODES = ["warehouse", "body_shop", "wbs", "paint", "pbs", "tcf",
 const OVERFLOW_CODES = ["shortage", "tcf_offline"];
 
 export function ProductionFlowDiagram({ counts, lineFeedingCount, onStationClick }: Props) {
+  const { isLaunchMode } = useProductionMode();
   const mainSteps: FlowStep[] = [];
   const overflowSteps: FlowStep[] = [];
+
+  // In Launch Mode, only show simplified flow
+  const launchMainCodes = ["warehouse", "wbs", "paint", "pbs"];
+  const launchOverflowCodes = ["shortage"];
 
   // Warehouse
   const wh = STATIONS.find(s => s.code === "warehouse")!;
   mainSteps.push({ key: "warehouse", label: wh.label, short: wh.short, icon: wh.icon, count: counts["warehouse"] ?? 0, onClick: () => onStationClick("warehouse") });
 
-  // Line Feeding (virtual step)
-  mainSteps.push({ key: "line_feeding", label: "Line Feeding", short: "LF", icon: Link2, count: lineFeedingCount, isVirtual: true, onClick: () => onStationClick("line_feeding") });
+  if (!isLaunchMode) {
+    // Line Feeding (virtual step)
+    mainSteps.push({ key: "line_feeding", label: "Line Feeding", short: "LF", icon: Link2, count: lineFeedingCount, isVirtual: true, onClick: () => onStationClick("line_feeding") });
+  }
 
   // Main flow stations (skip warehouse, already added)
-  STATIONS.filter(s => MAIN_FLOW_CODES.includes(s.code) && s.code !== "warehouse").forEach(s => {
+  const mainCodes = isLaunchMode ? launchMainCodes : MAIN_FLOW_CODES;
+  STATIONS.filter(s => mainCodes.includes(s.code) && s.code !== "warehouse").forEach(s => {
     mainSteps.push({ key: s.code, label: s.label, short: s.short, icon: s.icon, count: counts[s.code] ?? 0, onClick: () => onStationClick(s.code) });
   });
 
   // Overflow stations (beside the flow)
-  STATIONS.filter(s => OVERFLOW_CODES.includes(s.code)).forEach(s => {
+  const overflowCodes = isLaunchMode ? launchOverflowCodes : OVERFLOW_CODES;
+  STATIONS.filter(s => overflowCodes.includes(s.code)).forEach(s => {
     overflowSteps.push({ key: s.code, label: s.label, short: s.short, icon: s.icon, count: counts[s.code] ?? 0, onClick: () => onStationClick(s.code) });
   });
 

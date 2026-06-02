@@ -15,6 +15,12 @@ export type Database = {
         Update: { key?: string; updated_at?: string | null; value?: Json }
         Relationships: []
       }
+      contract_vehicle_log: {
+        Row: { contract_model: string; id: string; released_at: string; released_by: string | null; released_from: string; vin: string; vin_suffix: string | null }
+        Insert: { contract_model: string; id?: string; released_at?: string; released_by?: string | null; released_from: string; vin: string; vin_suffix?: string | null }
+        Update: { contract_model?: string; id?: string; released_at?: string; released_by?: string | null; released_from?: string; vin?: string; vin_suffix?: string | null }
+        Relationships: [{ foreignKeyName: "contract_vehicle_log_released_by_fkey"; columns: ["released_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }]
+      }
       engines: {
         Row: { created_at: string; engine_number: string; engine_suffix: string; id: string; job_order_id: string | null; lot_id: string | null; status: Database["public"]["Enums"]["engine_status"] }
         Insert: { created_at?: string; engine_number: string; engine_suffix: string; id?: string; job_order_id?: string | null; lot_id?: string | null; status?: Database["public"]["Enums"]["engine_status"] }
@@ -76,9 +82,15 @@ export type Database = {
         Relationships: [{ foreignKeyName: "production_plans_model_id_fkey"; columns: ["model_id"]; isOneToOne: false; referencedRelation: "models"; referencedColumns: ["id"] }]
       }
       profiles: {
-        Row: { created_at: string; display_name: string; employee_code: string | null; id: string }
-        Insert: { created_at?: string; display_name: string; employee_code?: string | null; id: string }
-        Update: { created_at?: string; display_name?: string; employee_code?: string | null; id?: string }
+        Row: { created_at: string; dashboard_allowed: boolean; display_name: string; employee_code: string | null; id: string }
+        Insert: { created_at?: string; dashboard_allowed?: boolean; display_name: string; employee_code?: string | null; id: string }
+        Update: { created_at?: string; dashboard_allowed?: boolean; display_name?: string; employee_code?: string | null; id?: string }
+        Relationships: []
+      }
+      shortage_buffers: {
+        Row: { buffer_date: string; closed_at: string | null; created_at: string | null; created_by: string | null; description: string | null; id: string; name: string; status: string; vehicle_ids: string[] }
+        Insert: { buffer_date?: string; closed_at?: string | null; created_at?: string | null; created_by?: string | null; description?: string | null; id?: string; name: string; status?: string; vehicle_ids?: string[] }
+        Update: { buffer_date?: string; closed_at?: string | null; created_at?: string | null; created_by?: string | null; description?: string | null; id?: string; name?: string; status?: string; vehicle_ids?: string[] }
         Relationships: []
       }
       shortages: {
@@ -130,9 +142,9 @@ export type Database = {
         Relationships: [{ foreignKeyName: "vehicle_restrictions_job_order_id_fkey"; columns: ["job_order_id"]; isOneToOne: false; referencedRelation: "job_orders"; referencedColumns: ["id"] }, { foreignKeyName: "vehicle_restrictions_vehicle_id_fkey"; columns: ["vehicle_id"]; isOneToOne: false; referencedRelation: "vehicles"; referencedColumns: ["id"] }]
       }
       vehicles: {
-        Row: { actual_color_id: string | null; completed_at: string | null; created_at: string; current_station: Database["public"]["Enums"]["station_code"] | null; id: string; is_lot_tail: boolean; job_order_id: string | null; lot_id: string | null; planned_color_id: string | null; tail_note: string | null; updated_at: string; vin: string; vin_suffix: string }
-        Insert: { actual_color_id?: string | null; completed_at?: string | null; created_at?: string; current_station?: Database["public"]["Enums"]["station_code"] | null; id?: string; is_lot_tail?: boolean; job_order_id?: string | null; lot_id?: string | null; planned_color_id?: string | null; tail_note?: string | null; updated_at?: string; vin: string; vin_suffix: string }
-        Update: { actual_color_id?: string | null; completed_at?: string | null; created_at?: string; current_station?: Database["public"]["Enums"]["station_code"] | null; id?: string; is_lot_tail?: boolean; job_order_id?: string | null; lot_id?: string | null; planned_color_id?: string | null; tail_note?: string | null; updated_at?: string; vin?: string; vin_suffix?: string }
+        Row: { actual_color_id: string | null; completed_at: string | null; contract_model: string | null; created_at: string; current_station: Database["public"]["Enums"]["station_code"] | null; id: string; is_lot_tail: boolean; job_order_id: string | null; lot_id: string | null; planned_color_id: string | null; tail_note: string | null; updated_at: string; vin: string; vin_suffix: string }
+        Insert: { actual_color_id?: string | null; completed_at?: string | null; contract_model?: string | null; created_at?: string; current_station?: Database["public"]["Enums"]["station_code"] | null; id?: string; is_lot_tail?: boolean; job_order_id?: string | null; lot_id?: string | null; planned_color_id?: string | null; tail_note?: string | null; updated_at?: string; vin: string; vin_suffix: string }
+        Update: { actual_color_id?: string | null; completed_at?: string | null; contract_model?: string | null; created_at?: string; current_station?: Database["public"]["Enums"]["station_code"] | null; id?: string; is_lot_tail?: boolean; job_order_id?: string | null; lot_id?: string | null; planned_color_id?: string | null; tail_note?: string | null; updated_at?: string; vin?: string; vin_suffix?: string }
         Relationships: [{ foreignKeyName: "vehicles_actual_color_id_fkey"; columns: ["actual_color_id"]; isOneToOne: false; referencedRelation: "standard_colors"; referencedColumns: ["id"] }, { foreignKeyName: "vehicles_job_order_id_fkey"; columns: ["job_order_id"]; isOneToOne: false; referencedRelation: "job_orders"; referencedColumns: ["id"] }, { foreignKeyName: "vehicles_lot_id_fkey"; columns: ["lot_id"]; isOneToOne: false; referencedRelation: "lots"; referencedColumns: ["id"] }, { foreignKeyName: "vehicles_planned_color_id_fkey"; columns: ["planned_color_id"]; isOneToOne: false; referencedRelation: "standard_colors"; referencedColumns: ["id"] }]
       }
     }
@@ -155,7 +167,7 @@ export type Database = {
       issue_status: "open" | "in_progress" | "resolved" | "closed"
       lot_status: "pending" | "active" | "completed"
       shortage_status: "open" | "cleared"
-      station_code: "warehouse" | "line_feeding" | "body_shop" | "wbs" | "paint" | "pbs" | "shortage" | "repair" | "cs" | "pdi" | "tcf" | "waiting_repair" | "tcf_offline"
+      station_code: "warehouse" | "line_feeding" | "body_shop" | "wbs" | "paint" | "pbs" | "shortage" | "repair" | "cs" | "pdi" | "tcf" | "waiting_repair" | "tcf_offline" | "completed"
     }
     CompositeTypes: { [_ in never]: never }
   }

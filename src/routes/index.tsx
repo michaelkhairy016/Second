@@ -2,7 +2,8 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { RequireAuth } from "@/components/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/lib/auth-context";
-import { STATIONS } from "@/lib/stations";
+import { STATIONS, getVisibleStations } from "@/lib/stations";
+import { useProductionMode } from "@/hooks/use-production-mode";
 import { Lock, ChevronRight, ShieldOff, PaintBucket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +22,7 @@ export const Route = createFileRoute("/")({
 
 function Home() {
   const { displayName, hasStation, isSuperuser, isStaff, isStatus } = useAuth();
+  const { isLaunchMode } = useProductionMode();
   const nav = useNavigate();
   const [requesting, setRequesting] = useState<string | null>(null);
 
@@ -83,7 +85,7 @@ function Home() {
       <section>
         <h2 className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-3">Data-entry stations</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {STATIONS.filter(s => s.module === "data-entry" || s.code === "tcf" || s.code === "waiting_repair").map(s => {
+          {getVisibleStations(isLaunchMode).filter(s => s.module === "data-entry" || s.code === "tcf" || s.code === "waiting_repair").map(s => {
             const unlocked = hasStation(s.code);
             const count = stationCounts[s.code] ?? 0;
             return (
@@ -113,7 +115,7 @@ function Home() {
         </div>
       </section>
 
-      {(isStaff || isSuperuser) && (
+      {(isStaff || isSuperuser) && !isLaunchMode && (
         <section>
           <h2 className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-3">Bulk-paste stations (Staff)</h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -134,7 +136,7 @@ function Home() {
               {(stationCounts["paint"] ?? 0) > 0 && <Badge variant="warning" className="absolute top-2 right-2 text-[10px] px-1.5">{stationCounts["paint"]}</Badge>}
               <div className="h-10 w-10 rounded-lg bg-amber-500/10 text-amber-600 grid place-items-center"><PaintBucket className="h-5 w-5" /></div>
               <div className="mt-3 font-medium">Paint Release</div>
-              <div className="text-xs text-muted-foreground">Bulk OUT — contract cars</div>
+              <div className="text-xs text-muted-foreground">Bulk OUT — all paint vehicles</div>
             </Link>
           </div>
         </section>

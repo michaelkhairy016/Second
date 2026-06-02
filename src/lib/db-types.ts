@@ -58,7 +58,7 @@ export type StationEventWithVehicle = Pick<StationEvent, "id" | "kind" | "color_
 
 export type VehicleSearchResult = Pick<
   Vehicle,
-  "id" | "vin" | "vin_suffix" | "planned_color_id" | "actual_color_id" | "current_station" | "lot_id" | "job_order_id" | "is_lot_tail" | "tail_note"
+  "id" | "vin" | "vin_suffix" | "planned_color_id" | "actual_color_id" | "current_station" | "lot_id" | "job_order_id" | "is_lot_tail" | "tail_note" | "contract_model"
 >;
 
 export type AccessRequestWithProfile = StationAccessRequest & {

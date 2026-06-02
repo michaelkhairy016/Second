@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { RequireAuth } from "@/components/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/lib/auth-context";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { EmptyState } from "@/components/EmptyState";
 import { STATIONS, stationByCode } from "@/lib/stations";
 import { toast } from "sonner";
-import { Check, Inbox, Loader2, X, History, ArrowLeft } from "lucide-react";
+import { Check, Inbox, Loader2, X, History, ArrowLeft, LayoutDashboard, Truck } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AccessRequestWithProfile, StationCode, AppRole } from "@/lib/db-types";
 
@@ -21,6 +21,7 @@ interface AdminUser {
   display_name: string;
   roles: AppRole[];
   stations: StationCode[];
+  dashboard_allowed: boolean;
 }
 
 export const Route = createFileRoute("/admin")({
@@ -41,9 +42,11 @@ function Page() {
         <TabsList>
           <TabsTrigger value="users">Users & Access</TabsTrigger>
           <TabsTrigger value="activity">Activity Log</TabsTrigger>
+          {isSuperuser && <TabsTrigger value="contracts">Contract Production</TabsTrigger>}
         </TabsList>
         <TabsContent value="users"><UsersPanel isSuperuser={isSuperuser} /></TabsContent>
         <TabsContent value="activity"><ActivityLog /></TabsContent>
+        {isSuperuser && <TabsContent value="contracts"><ContractProductionPanel /></TabsContent>}
       </Tabs>
     </div>
   );
@@ -55,16 +58,18 @@ function UsersPanel({ isSuperuser }: { isSuperuser: boolean }) {
   const reload = async () => {
     const [{ data: r }, { data: p }, { data: ro }, { data: as }] = await Promise.all([
       supabase.from("station_access_requests").select("id,user_id,station,status,created_at").eq("status","pending").order("created_at"),
-      supabase.from("profiles").select("id, display_name"),
+      supabase.from("profiles").select("id, display_name, dashboard_allowed"),
       supabase.from("user_roles").select("id,user_id,role"),
       supabase.from("station_assignments").select("id,user_id,station"),
     ]);
-    const profileMap = new Map((p ?? []).map(x => [x.id, x.display_name]));
-    setReqs((r ?? []).map(req => ({ ...req, profile: { display_name: profileMap.get(req.user_id) ?? "User" } })));
+    const profileMap = new Map((p ?? []).map(x => [x.id, { display_name: x.display_name, dashboard_allowed: x.dashboard_allowed }]));
+    setReqs((r ?? []).map(req => ({ ...req, profile: { display_name: profileMap.get(req.user_id)?.display_name ?? "User" } })));
     setUsers((p ?? []).map(u => ({
       ...u,
+      display_name: u.display_name,
       roles: (ro ?? []).filter(x => x.user_id === u.id).map(x => x.role),
       stations: (as ?? []).filter(x => x.user_id === u.id).map(x => x.station),
+      dashboard_allowed: u.dashboard_allowed,
     })));
   };
   useEffect(() => { reload(); const ch = supabase.channel("admin").on("postgres_changes",{event:"*",schema:"public",table:"station_access_requests"},reload).subscribe(); return () => { supabase.removeChannel(ch); }; }, []);
@@ -88,6 +93,11 @@ function UsersPanel({ isSuperuser }: { isSuperuser: boolean }) {
   const setRole = async (uid: string, role: "superuser" | "technician" | "staff" | "status", on: boolean) => {
     if (on) await supabase.from("user_roles").upsert({ user_id: uid, role }, { onConflict: "user_id,role" });
     else await supabase.from("user_roles").delete().eq("user_id", uid).eq("role", role);
+    reload();
+  };
+
+  const toggleDashboard = async (uid: string, on: boolean) => {
+    await supabase.from("profiles").update({ dashboard_allowed: on }).eq("id", uid);
     reload();
   };
 
@@ -130,6 +140,9 @@ function UsersPanel({ isSuperuser }: { isSuperuser: boolean }) {
                     const on = u.stations.includes(s.code);
                     return <button key={s.code} onClick={() => toggleStation(u.id, s.code, !on)}><Badge variant={on ? "success" : "muted"}>{s.short}</Badge></button>;
                   })}
+                  <button onClick={() => toggleDashboard(u.id, !u.dashboard_allowed)} title="Dashboard access">
+                    <Badge variant={u.dashboard_allowed ? "info" : "muted"}><LayoutDashboard className="h-3 w-3 mr-1 inline" />Dashboard</Badge>
+                  </button>
                 </div>
               </div>
             ))}
@@ -282,6 +295,118 @@ function ActivityLog() {
           )}
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+type ContractLogEntry = {
+  id: string;
+  vin: string;
+  vin_suffix: string | null;
+  contract_model: string;
+  released_from: string;
+  released_at: string;
+  released_by: string | null;
+  releaser: { display_name: string } | null;
+};
+
+function ContractProductionPanel() {
+  const [logs, setLogs] = useState<ContractLogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [monthFilter, setMonthFilter] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
+
+  const load = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("contract_vehicle_log")
+      .select("id, vin, vin_suffix, contract_model, released_from, released_at, released_by, releaser:profiles(display_name)")
+      .gte("released_at", `${monthFilter}-01T00:00:00`)
+      .lt("released_at", `${monthFilter}-32T00:00:00`)
+      .order("released_at", { ascending: false });
+    if (error) { toast.error(error.message); setLoading(false); return; }
+    setLogs((data ?? []) as unknown as ContractLogEntry[]);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [monthFilter]);
+
+  const summary = useMemo(() => {
+    const m = new Map<string, { model: string; count: number; fromWbs: number; fromPaint: number }>();
+    logs.forEach(l => {
+      const e = m.get(l.contract_model) ?? { model: l.contract_model, count: 0, fromWbs: 0, fromPaint: 0 };
+      e.count++;
+      if (l.released_from === "wbs") e.fromWbs++;
+      if (l.released_from === "paint") e.fromPaint++;
+      m.set(l.contract_model, e);
+    });
+    return Array.from(m.values()).sort((a, b) => b.count - a.count);
+  }, [logs]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <Label className="text-sm">Month</Label>
+        <Input type="month" value={monthFilter} onChange={e => setMonthFilter(e.target.value)} className="w-40" />
+        <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh"}
+        </Button>
+      </div>
+
+      {summary.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">Monthly Summary</CardTitle></CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {summary.map(s => (
+                <div key={s.model} className="border rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold">{s.count}</div>
+                  <div className="text-sm font-medium">{s.model}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {s.fromWbs > 0 && `${s.fromWbs} from WBS`} {s.fromPaint > 0 && `${s.fromWbs > 0 ? "· " : ""}${s.fromPaint} from Paint`}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Contract Vehicles Released ({logs.length})</CardTitle></CardHeader>
+        <CardContent>
+          {loading ? <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div> : logs.length === 0 ? (
+            <EmptyState icon={Truck} title="No contract vehicles" description={`No contract vehicles released in ${monthFilter}.`} />
+          ) : (
+            <div className="border rounded-md overflow-x-auto max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-card">
+                  <tr className="bg-muted">
+                    <th className="p-2 text-left font-semibold">Date</th>
+                    <th className="p-2 text-left font-semibold">VIN</th>
+                    <th className="p-2 text-left font-semibold">Model</th>
+                    <th className="p-2 text-left font-semibold">Released From</th>
+                    <th className="p-2 text-left font-semibold">By</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {logs.map(l => (
+                    <tr key={l.id}>
+                      <td className="p-2 whitespace-nowrap">{new Date(l.released_at).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
+                      <td className="p-2 font-mono">{l.vin}</td>
+                      <td className="p-2"><Badge variant="info" className="text-[10px] px-1">{l.contract_model}</Badge></td>
+                      <td className="p-2 capitalize">{l.released_from}</td>
+                      <td className="p-2 font-medium">{l.releaser?.display_name ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

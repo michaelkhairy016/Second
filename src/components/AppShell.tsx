@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useTheme } from "@/hooks/use-theme";
+import { useProductionMode } from "@/hooks/use-production-mode";
 import {
   LayoutGrid, ClipboardList, BarChart3, Users, LogOut, Search, AlertCircle,
   Settings, GitBranch, Eye, Sun, Moon, CalendarDays, ShieldCheck, Clock,
@@ -16,7 +17,8 @@ import {
 import type { ReactNode } from "react";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { displayName, roles, signOut, isSuperuser, isStaff, isStatus } = useAuth();
+  const { displayName, roles, signOut, isSuperuser, isStaff, isStatus, dashboardAllowed } = useAuth();
+  const { isLaunchMode } = useProductionMode();
   const nav = useNavigate();
   const loc = useLocation();
   const { theme, toggleTheme } = useTheme();
@@ -66,8 +68,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     { to: "/status", label: "Status", icon: Eye, show: isStatus },
     { to: "/delayed", label: "Delayed", icon: Clock, show: isSuperuser || isStaff },
     { to: "/analytics", label: "Analytics", icon: BarChart3, show: isSuperuser || isStaff || isStatus },
-    { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, show: isSuperuser || isStaff || isStatus },
-    { to: "/manual-entry", label: "Manual Entry", icon: PenTool, show: isStaff || isSuperuser },
+    { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, show: (isSuperuser || isStaff || isStatus) && dashboardAllowed },
+    { to: "/manual-entry", label: "Manual Entry", icon: PenTool, show: (isStaff || isSuperuser) && !isLaunchMode },
     { to: "/admin", label: "Admin", icon: Users, show: isSuperuser },
     { to: "/settings", label: "Settings", icon: Settings, show: isSuperuser },
     { to: "/calendar", label: "Calendar", icon: CalendarDays, show: true },
