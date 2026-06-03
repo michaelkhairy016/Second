@@ -148,6 +148,15 @@ Deno.serve(async (req: Request) => {
     });
     (autotable as any)(doc, { startY: y, head: [["Station", "Total Out", "JPH"]], body: jphRows, theme: "grid", styles: { fontSize: 8, cellPadding: 2 }, headStyles: { fillColor: [211, 84, 0], textColor: 255 } });
 
+    const pageCount = doc.getNumberOfPages();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "normal");
+      doc.text("Created By Michael Amgad Khairy - Planning Section", pageWidth / 2, pageHeight - 3, { align: "center" });
+    }
+
     const pdfBase64 = doc.output("datauristring").split(",")[1];
 
     // Build attachments list

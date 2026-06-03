@@ -75,12 +75,15 @@ function Page() {
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [lots, setLots] = useState<LotRow[]>([]);
   const [issues, setIssues] = useState<IssueRow[]>([]);
+  const [workingHoursMap, setWorkingHoursMap] = useState<Map<string, { entered_at: string; working_hours: number; working_days: number }>>(new Map());
+  const [monthlyEvents, setMonthlyEvents] = useState<EventRow[]>([]);
+  const [monthlyShortages, setMonthlyShortages] = useState<ShortageRow[]>([]);
 
   const monthStart = selectedDate.slice(0, 8) + "01";
   const lotMap = useMemo(() => Object.fromEntries(lots.map(l => [l.id, l.model])), [lots]);
   const vModel = useMemo(() => {
     const m = new Map<string, string>();
-    vehicles.forEach(v => { m.set(v.id, v.contract_model || (v.lot_id && lotMap[v.lot_id]) || ""); });
+    vehicles.forEach(v => { m.set(v.id, v.contract_model || (v.lot_id && lotMap[v.lot_id]) || "Unknown"); });
     return m;
   }, [vehicles, lotMap]);
 
@@ -91,13 +94,11 @@ function Page() {
     const ids = new Set<string>();
     vehicles.forEach(v => {
       if (v.vin.toLowerCase().includes(q)) ids.add(v.id);
-    });
-    events.forEach(e => {
-      const model = vModel.get(e.vehicle_id) ?? "";
-      if (model.toLowerCase().includes(q)) ids.add(e.vehicle_id);
+      const model = vModel.get(v.id) ?? "";
+      if (model.toLowerCase().includes(q)) ids.add(v.id);
     });
     return ids;
-  }, [vinSearch, vehicles, vModel, events]);
+  }, [vinSearch, vehicles, vModel]);
 
   const load = async () => {
     setLoading(true);
@@ -124,10 +125,19 @@ function Page() {
     setIssues((iRes.data ?? []) as IssueRow[]);
     setAllOpenShortages((osRes.data ?? []) as unknown as ShortageRow[]);
     setShortagesClearedToday((clRes.data ?? []) as unknown as ShortageRow[]);
-    setLoading(false);
 
-    (window as any).__monthlyEvents = (mEvRes.data ?? []) as EventRow[];
-    (window as any).__monthlyShortages = (mShRes.data ?? []) as unknown as ShortageRow[];
+    // Fetch working hours from calendar via RPC
+    const allStations = ["body_shop", "wbs", "paint", "pbs", "shortage", "repair", "cs", "pdi", "tcf", "tcf_offline"];
+    const { data: whData } = await supabase.rpc("get_wip_working_hours", { station_codes: allStations });
+    const whMap = new Map<string, { entered_at: string; working_hours: number; working_days: number }>();
+    (whData as any[] ?? []).forEach((r: any) => {
+      whMap.set(r.vehicle_id, { entered_at: r.entered_at, working_hours: Number(r.working_hours ?? 0) || 0, working_days: Number(r.working_days ?? 0) || 0 });
+    });
+    setWorkingHoursMap(whMap);
+    setMonthlyEvents((mEvRes.data ?? []) as EventRow[]);
+    setMonthlyShortages((mShRes.data ?? []) as unknown as ShortageRow[]);
+
+    setLoading(false);
   };
 
   useEffect(() => { load(); }, [selectedDate]);
@@ -143,7 +153,7 @@ function Page() {
 
   const station = DEPT_STATION[activeDept];
   const dayEvents = useMemo(() => events.filter(e => e.station === station), [events, station]);
-  const monthEvents = useMemo(() => ((window as any).__monthlyEvents ?? []) as EventRow[], []);
+  const monthEvents = useMemo(() => monthlyEvents, [monthlyEvents]);
   const monthDayEvents = useMemo(() => monthEvents.filter(e => e.station === station), [monthEvents, station]);
 
   const carsInToday = useMemo(() => activeDept === "shortages" ? shortages.length : dayEvents.filter(e => e.kind === "in").length, [activeDept, shortages, dayEvents]);
@@ -154,15 +164,12 @@ function Page() {
 
   const avgTimeHours = useMemo(() => {
     if (wipVehicles.length === 0) return 0;
-    const now = Date.now();
-    const inEvents = events.filter(e => e.station === station && e.kind === "in");
     const total = wipVehicles.reduce((sum, v) => {
-      const inEv = inEvents.find(e => e.vehicle_id === v.id);
-      if (!inEv) return sum;
-      return sum + (now - new Date(inEv.recorded_at).getTime()) / 3600000;
+      const wh = workingHoursMap.get(v.id);
+      return sum + (wh?.working_hours ?? 0);
     }, 0);
     return total / wipVehicles.length;
-  }, [wipVehicles, events, station]);
+  }, [wipVehicles, workingHoursMap]);
 
   const vehicleIssues = useMemo(() => {
     const m = new Map<string, string[]>();
@@ -193,25 +200,24 @@ function Page() {
   const classifyWbs = useCallback((vId: string) => vehicleIssues.has(vId) ? "Issue" : "OK", [vehicleIssues]);
 
   const delayedWip = useMemo(() => {
-    const inEventsMap = new Map<string, string>();
-    events.filter(e => e.station === station && e.kind === "in").forEach(e => inEventsMap.set(e.vehicle_id, e.recorded_at));
-    const now = Date.now();
     return wipVehicles
       .map(v => {
-        const inAt = inEventsMap.get(v.id) || v.updated_at;
-        const hours = (now - new Date(inAt).getTime()) / 3600000;
+        const wh = workingHoursMap.get(v.id);
+        const hours = wh?.working_hours ?? 0;
+        const workingDays = wh?.working_days ?? 0;
+        const enteredAt = wh?.entered_at ?? null;
         const model = vModel.get(v.id) || "—";
         let category = "OK";
         if (activeDept === "shortages") category = vehicleShortageCategory.get(v.id) ?? "CKD";
         else if (activeDept === "pbs") category = classifyPbs(v.id);
         else if (activeDept === "wbs") category = classifyWbs(v.id);
         const issueList = vehicleIssues.get(v.id) ?? [];
-        return { vin: v.vin, model, category, hours, issue: issueList.join("; "), vehicleId: v.id };
+        return { vin: v.vin, model, category, hours, workingDays, enteredAt, issue: issueList.join("; "), vehicleId: v.id };
       })
-      .filter(v => v.hours > delayThreshold)
+      .filter(v => delayThreshold > 0 ? v.hours > delayThreshold : true)
       .filter(v => !searchVidSet || searchVidSet.has(v.vehicleId))
       .sort((a, b) => b.hours - a.hours);
-  }, [wipVehicles, events, station, delayThreshold, activeDept, vModel, vehicleIssues, vehicleShortageCategory, searchVidSet, classifyPbs, classifyWbs]);
+  }, [wipVehicles, workingHoursMap, delayThreshold, activeDept, vModel, vehicleIssues, vehicleShortageCategory, searchVidSet, classifyPbs, classifyWbs]);
 
   const buildReportTable = useMemo(() => {
     if (activeDept === "shortages") {
@@ -228,7 +234,7 @@ function Page() {
         const cat = mapShortageReason(s.shortage_reason);
         dayMap.Out[cat] = (dayMap.Out[cat] ?? 0) + 1;
       });
-      const monthSh = ((window as any).__monthlyShortages ?? []) as ShortageRow[];
+      const monthSh = monthlyShortages;
       const monthMap: Record<string, Record<string, number>> = { In: {}, Out: {} };
       cats.forEach(c => { monthMap.In[c] = 0; monthMap.Out[c] = 0; });
       monthSh.filter(s => s.status === "open").forEach(s => {
@@ -308,7 +314,7 @@ function Page() {
       wipMap[c] = (wipMap[c] ?? 0) + 1;
     });
     return { cats, dayMap, monthMap, wipMap };
-  }, [activeDept, dayEvents, monthDayEvents, wipVehicles, vehicleIssues, vehicleShortageCategory, shortages, shortagesClearedToday, classifyPbs, classifyWbs]);
+  }, [activeDept, dayEvents, monthDayEvents, wipVehicles, vehicleIssues, vehicleShortageCategory, shortages, shortagesClearedToday, monthlyShortages, classifyPbs, classifyWbs]);
 
   const modelAnalysis = useMemo(() => {
     const models = new Map<string, { inToday: number; outToday: number; wip: number; vinIds: string[] }>();
@@ -520,11 +526,11 @@ function Page() {
                   <StatBox label={d === "shortages" ? "Open Shortages" : "Not OK (Issues)"} value={d === activeDept ? (d === "shortages" ? allOpenShortages.length : wipVehicles.filter(v => vehicleIssues.has(v.id)).length) : 0} color="red" />
                 </div>
 
-                {/* Delayed WIP */}
+                {/* Delayed / Live WIP */}
                 {delayedWip.length > 0 && (
                   <div className="bg-card rounded-lg border p-4">
-                    <h3 className="font-bold text-lg text-destructive text-center mb-4">
-                      Delayed WIP Cars (&gt; {delayThreshold} hours)
+                    <h3 className={`font-bold text-lg text-center mb-4 ${delayThreshold > 0 ? "text-destructive" : "text-foreground"}`}>
+                      {delayThreshold > 0 ? `Delayed WIP Cars (> ${delayThreshold} working hours)` : "Live WIP (All Cars)"}
                     </h3>
                     <div className="overflow-x-auto">
                       <table className="w-full text-left text-sm">
@@ -534,7 +540,9 @@ function Page() {
                             <th className="p-2 font-semibold">Model</th>
                             <th className="p-2 font-semibold">Category</th>
                             <th className="p-2 font-semibold">Issue</th>
-                            <th className="p-2 font-semibold">Time in WIP (Hours)</th>
+                            <th className="p-2 font-semibold">Entry Date/Time</th>
+                            <th className="p-2 font-semibold">Working Hours</th>
+                            <th className="p-2 font-semibold">Working Days</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y">
@@ -543,8 +551,12 @@ function Page() {
                               <td className="p-2 font-mono text-xs">{r.vin}</td>
                               <td className="p-2">{r.model}</td>
                               <td className="p-2"><Badge variant="secondary" className="text-[10px]">{r.category}</Badge></td>
-                              <td className="p-2 text-xs text-muted-foreground">{r.issue ? <Badge variant="destructive" className="text-[10px]">{r.issue}</Badge> : <Badge variant={activeDept === "shortages" ? "warning" : "success"} className="text-[10px]">{activeDept === "shortages" ? r.category : "OK"}</Badge>}</td>
-                              <td className="p-2 font-bold text-destructive">{r.hours.toFixed(1)}</td>
+                              <td className="p-2 text-xs">
+                                {r.issue ? <span className="text-muted-foreground">{r.issue}</span> : <span className="text-muted-foreground">—</span>}
+                              </td>
+                              <td className="p-2 text-xs text-muted-foreground">{r.enteredAt ? new Date(r.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(r.enteredAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—"}</td>
+                              <td className={`p-2 font-bold ${delayThreshold > 0 ? "text-destructive" : "text-foreground"}`}>{r.hours.toFixed(1)}h</td>
+                              <td className="p-2">{r.workingDays}d</td>
                             </tr>
                           ))}
                         </tbody>
@@ -575,14 +587,21 @@ function Page() {
                     <h3 className="font-bold text-lg text-center mb-4">Category Distribution</h3>
                     <div className="space-y-2 max-w-lg mx-auto">
                       {chartData.map((d, i) => {
-                        const colors = ["bg-orange-500", "bg-blue-500", "bg-green-500", "bg-amber-500", "bg-purple-500", "bg-red-500"];
+                        const colors = [
+                          "bg-orange-500 dark:bg-gray-500",
+                          "bg-blue-500 dark:bg-gray-400",
+                          "bg-green-500 dark:bg-gray-600",
+                          "bg-amber-500 dark:bg-gray-500",
+                          "bg-purple-500 dark:bg-gray-400",
+                          "bg-red-500 dark:bg-gray-600",
+                        ];
                         const pct = (d.value / chartMaxVal) * 100;
                         return (
                           <div key={i} className="flex items-center gap-2">
                             <span className="text-xs w-28 text-right shrink-0">{d.label}</span>
                             <div className="flex-1 bg-muted rounded h-6 overflow-hidden">
                               <div className={`h-full rounded ${colors[i % colors.length]} flex items-center pl-2`} style={{ width: `${Math.max(pct, 8)}%` }}>
-                                <span className="text-[10px] font-bold text-white">{d.value}</span>
+                                <span className="text-[10px] font-bold text-white dark:text-gray-100">{d.value}</span>
                               </div>
                             </div>
                           </div>
@@ -953,7 +972,7 @@ function OverviewSection({ events, vehicles, issues, shortages, allOpenShortages
 }
 
 function StatBox({ label, value, color }: { label: string; value: number | string; color: "blue" | "green" | "amber" | "purple" | "red" }) {
-  const cls = color === "blue" ? "text-blue-600" : color === "green" ? "text-green-600" : color === "amber" ? "text-amber-600" : color === "red" ? "text-red-600" : "text-purple-600";
+  const cls = color === "blue" ? "text-blue-600 dark:text-gray-300" : color === "green" ? "text-green-600 dark:text-gray-300" : color === "amber" ? "text-amber-600 dark:text-gray-300" : color === "red" ? "text-red-600 dark:text-gray-300" : "text-purple-600 dark:text-gray-300";
   return (
     <div className="bg-card rounded-lg border p-4 text-center">
       <h4 className="text-xs font-bold uppercase text-muted-foreground">{label}</h4>
@@ -982,7 +1001,7 @@ function ReportTable({ cats, data, onCellClick }: { cats: readonly string[]; dat
                   {val > 0 ? (
                     <button
                       onClick={() => onCellClick(c, status.toLowerCase() as "in" | "out")}
-                      className="text-blue-600 hover:text-blue-800 hover:underline font-bold cursor-pointer"
+                      className="text-blue-600 dark:text-gray-300 hover:text-blue-800 dark:hover:text-gray-100 hover:underline font-bold cursor-pointer"
                     >
                       {val}
                     </button>

@@ -150,6 +150,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
         <main className="flex-1 w-full max-w-7xl mx-auto px-4 py-6">{children}</main>
+        <footer className="text-center py-2 text-[10px] text-muted-foreground/60">
+          Developed by Eng.Michael Amgad Khairy — Planning Section
+        </footer>
       </SidebarInset>
     </SidebarProvider>
   );

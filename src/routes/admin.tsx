@@ -189,12 +189,12 @@ function ActivityLog() {
     setLoading(true);
     const [evRes, shRes] = await Promise.all([
       supabase.from("station_events")
-        .select("id, station, kind, recorded_at, source, vehicle:vehicles(vin), recorder:profiles!station_events_recorded_by_fkey(display_name)")
+        .select("id, station, kind, recorded_at, source, vehicle:vehicles(vin), recorder:profiles!station_events_profiles_recorded_by_fkey(display_name)")
         .gte("recorded_at", threeDaysAgo)
         .order("recorded_at", { ascending: false })
         .limit(150),
       supabase.from("shortages")
-        .select("id, parts, status, shortage_reason, created_at, cleared_at, vehicle:vehicles(vin), creator:profiles!shortages_created_by_fkey(display_name), clearer:profiles!shortages_cleared_by_fkey(display_name)")
+        .select("id, parts, status, shortage_reason, created_at, cleared_at, vehicle:vehicles(vin), creator:profiles!shortages_profiles_created_by_fkey(display_name), clearer:profiles!shortages_profiles_cleared_by_fkey(display_name)")
         .gte("created_at", threeDaysAgo)
         .order("created_at", { ascending: false })
         .limit(80),
@@ -324,7 +324,7 @@ function ContractProductionPanel() {
       .from("contract_vehicle_log")
       .select("id, vin, vin_suffix, contract_model, released_from, released_at, released_by, releaser:profiles(display_name)")
       .gte("released_at", `${monthFilter}-01T00:00:00`)
-      .lt("released_at", `${monthFilter}-32T00:00:00`)
+      .lt("released_at", (() => { const [y, m] = monthFilter.split("-").map(Number); const next = new Date(y, m, 1); return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-01T00:00:00`; })())
       .order("released_at", { ascending: false });
     if (error) { toast.error(error.message); setLoading(false); return; }
     setLogs((data ?? []) as unknown as ContractLogEntry[]);

@@ -154,6 +154,7 @@ export type Database = {
       decrease_producible: { Args: { count_input: number; lot_id_input: string }; Returns: undefined }
       get_daily_status_data: { Args: never; Returns: Json }
       get_delayed_vehicles: { Args: { threshold_days?: number }; Returns: { current_station: string; entered_at: string; job_order_id: string; lot_code: string; lot_model: string; vehicle_id: string; vin: string; vin_suffix: string; working_days_at_station: number; working_hours_at_station: number }[] }
+      get_wip_working_hours: { Args: { station_codes: string[] }; Returns: { vehicle_id: string; entered_at: string; working_hours: number; working_days: number }[] }
       get_home_stats: { Args: never; Returns: Json }
       has_role: { Args: { _role: Database["public"]["Enums"]["app_role"]; _user_id: string }; Returns: boolean }
       has_station_access: { Args: { _station: Database["public"]["Enums"]["station_code"]; _user_id: string }; Returns: boolean }

@@ -108,6 +108,99 @@ function drawBarChart(doc: any, x: number, y: number, w: number, h: number, data
   });
 }
 
+function drawPieChart(doc: any, cx: number, cy: number, r: number, data: { label: string; value: number; color: number[] }[]) {
+  const total = data.reduce((s, d) => s + d.value, 0);
+  if (total === 0) return;
+  let angle = -Math.PI / 2;
+
+  data.forEach((d) => {
+    const sliceAngle = (d.value / total) * 2 * Math.PI;
+    doc.setFillColor(d.color[0], d.color[1], d.color[2]);
+    doc.triangle(cx, cy, cx + r * Math.cos(angle), cy + r * Math.sin(angle), cx + r * Math.cos(angle + sliceAngle), cy + r * Math.sin(angle + sliceAngle), "F");
+    // Fill arc segments for smooth pie
+    const steps = Math.max(Math.ceil(sliceAngle / 0.05), 2);
+    for (let i = 0; i < steps; i++) {
+      const a1 = angle + (i / steps) * sliceAngle;
+      const a2 = angle + ((i + 1) / steps) * sliceAngle;
+      doc.triangle(cx, cy, cx + r * Math.cos(a1), cy + r * Math.sin(a1), cx + r * Math.cos(a2), cy + r * Math.sin(a2), "F");
+    }
+    angle += sliceAngle;
+  });
+
+  // White center for donut
+  doc.setFillColor(255, 255, 255);
+  doc.circle(cx, cy, r * 0.5, "F");
+
+  // Center text
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(30, 41, 59);
+  doc.text(String(total), cx, cy + 1, { align: "center", baseline: "middle" });
+  doc.setFontSize(6);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(100, 116, 139);
+  doc.text("Total", cx, cy + 5, { align: "center", baseline: "middle" });
+}
+
+function drawPieLegend(doc: any, x: number, y: number, data: { label: string; value: number; color: number[] }[]) {
+  const total = data.reduce((s, d) => s + d.value, 0);
+  data.forEach((d, i) => {
+    const ly = y + i * 8;
+    doc.setFillColor(d.color[0], d.color[1], d.color[2]);
+    doc.rect(x, ly, 4, 4, "F");
+    doc.setFontSize(7);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(71, 85, 105);
+    doc.text(`${d.label} (${d.value})`, x + 6, ly + 3, { baseline: "middle" });
+    if (total > 0) {
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(30, 41, 59);
+      doc.text(`${((d.value / total) * 100).toFixed(0)}%`, x + 55, ly + 3, { baseline: "middle" });
+    }
+  });
+}
+
+function drawGauge(doc: any, cx: number, cy: number, r: number, pct: number, label: string, valueText: string, color: number[]) {
+  const startAngle = Math.PI * 0.75;
+  const endAngle = Math.PI * 2.25;
+  const totalAngle = endAngle - startAngle;
+  const fillAngle = startAngle + totalAngle * Math.min(pct, 1);
+
+  // Background arc
+  const bgSteps = 40;
+  doc.setFillColor(226, 232, 240);
+  for (let i = 0; i < bgSteps; i++) {
+    const a1 = startAngle + (i / bgSteps) * totalAngle;
+    const a2 = startAngle + ((i + 1) / bgSteps) * totalAngle;
+    doc.triangle(cx, cy, cx + r * Math.cos(a1), cy + r * Math.sin(a1), cx + r * Math.cos(a2), cy + r * Math.sin(a2), "F");
+  }
+
+  // Filled arc
+  const fillSteps = Math.max(Math.ceil(((fillAngle - startAngle) / totalAngle) * bgSteps), 2);
+  doc.setFillColor(color[0], color[1], color[2]);
+  for (let i = 0; i < fillSteps; i++) {
+    const a1 = startAngle + (i / fillSteps) * (fillAngle - startAngle);
+    const a2 = startAngle + ((i + 1) / fillSteps) * (fillAngle - startAngle);
+    doc.triangle(cx, cy, cx + r * Math.cos(a1), cy + r * Math.sin(a1), cx + r * Math.cos(a2), cy + r * Math.sin(a2), "F");
+  }
+
+  // White center
+  doc.setFillColor(255, 255, 255);
+  doc.circle(cx, cy, r * 0.6, "F");
+
+  // Center value
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(30, 41, 59);
+  doc.text(valueText, cx, cy, { align: "center", baseline: "middle" });
+
+  // Label below
+  doc.setFontSize(6);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(100, 116, 139);
+  doc.text(label, cx, cy + r + 4, { align: "center", baseline: "middle" });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, {
@@ -235,6 +328,7 @@ Deno.serve(async (req: Request) => {
         if (s) {
           const cat = getCategoryForShortage(s);
           (v as any).issue = (s.parts as string[] || []).join(", ") || s.notes || "";
+          (v as any).category = cat;
           (v as any).entry_time = s.created_at;
           if (!catMap[cat]) catMap[cat] = [];
           catMap[cat].push(v);
@@ -250,16 +344,18 @@ Deno.serve(async (req: Request) => {
 
       wipVehicles.forEach(v => {
         const issues = issueMap[v.id] || [];
+        let cat = "No Issue";
         if (issues.length === 0) {
           catMap["No Issue"].push(v);
         } else {
           const issueText = issues.join(" ").toLowerCase();
-          if (issueText.includes("ckd")) catMap["CKD"].push(v);
-          else if (issueText.includes("plastic") || issueText.includes("سبيلر")) catMap["Plastics"].push(v);
-          else if (issueText.includes("dismant") || issueText.includes("فك") || issueText.includes("تجميع")) catMap["Dismantled"].push(v);
-          else catMap["Local"].push(v);
+          if (issueText.includes("ckd")) { cat = "CKD"; catMap["CKD"].push(v); }
+          else if (issueText.includes("plastic") || issueText.includes("سبيلر")) { cat = "Plastics"; catMap["Plastics"].push(v); }
+          else if (issueText.includes("dismant") || issueText.includes("فك") || issueText.includes("تجميع")) { cat = "Dismantled"; catMap["Dismantled"].push(v); }
+          else { cat = "Local"; catMap["Local"].push(v); }
         }
         (v as any).issue = issues.join("; ") || "";
+        (v as any).category = cat;
       });
       catOrder.forEach(c => {
         if (catMap[c] && catMap[c].length > 0) categories.push({ name: c, vehicles: catMap[c] });
@@ -268,9 +364,10 @@ Deno.serve(async (req: Request) => {
       const catMap: Record<string, typeof wipVehicles> = { "Issue": [], "OK": [] };
       wipVehicles.forEach(v => {
         const issues = issueMap[v.id] || [];
-        if (issues.length > 0) catMap["Issue"].push(v);
-        else catMap["OK"].push(v);
+        const cat = issues.length > 0 ? "Issue" : "OK";
+        catMap[cat].push(v);
         (v as any).issue = issues.join("; ") || "";
+        (v as any).category = cat;
       });
       ["Issue", "OK"].forEach(c => {
         if (catMap[c] && catMap[c].length > 0) categories.push({ name: c, vehicles: catMap[c] });
@@ -363,8 +460,8 @@ Deno.serve(async (req: Request) => {
     });
     y = (doc as any).lastAutoTable.finalY + 8;
 
-    // === BAR CHART ===
-    needSpace(45);
+    // === BAR CHART + PIE CHART ===
+    needSpace(55);
     doc.setFontSize(11);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(30, 41, 59);
@@ -379,8 +476,70 @@ Deno.serve(async (req: Request) => {
       value: c.vehicles.length,
       color: chartColors[i % chartColors.length],
     }));
-    drawBarChart(doc, 14, y, pageWidth / 2 - 20, 40, chartData);
-    y += Math.max(categories.length * 15 + 5, 30);
+    // Bar chart on left half
+    drawBarChart(doc, 14, y, pageWidth / 2 - 25, 45, chartData);
+
+    // Pie/donut chart on right half
+    if (chartData.length > 0) {
+      const pieCx = pageWidth / 2 + 30;
+      const pieCy = y + 22;
+      drawPieChart(doc, pieCx, pieCy, 20, chartData);
+      drawPieLegend(doc, pieCx + 30, pieCy - chartData.length * 4, chartData);
+    }
+
+    y += Math.max(categories.length * 15 + 5, 45);
+
+    // === KPI GAUGES ===
+    needSpace(35);
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(30, 41, 59);
+    doc.text("Performance Gauges", 14, y);
+    y += 5;
+
+    const delayPct = wipVehicles.length > 0 ? delayedWip / wipVehicles.length : 0;
+    const gaugeY = y + 12;
+    const gaugeSpacing = (pageWidth - 28) / 3;
+    const gaugeColor = (pct: number) => pct > 0.5 ? [239, 68, 68] : pct > 0.2 ? [245, 158, 11] : [16, 185, 129];
+
+    drawGauge(doc, 14 + gaugeSpacing * 0.5, gaugeY, 14, wipVehicles.length > 0 ? 1 : 0, "WIP Utilization", `${wipVehicles.length}`, [59, 130, 246]);
+    drawGauge(doc, 14 + gaugeSpacing * 1.5, gaugeY, 14, delayPct, "Delayed WIP %", `${(delayPct * 100).toFixed(0)}%`, gaugeColor(delayPct));
+    const okPct = wipVehicles.length > 0
+      ? categories.filter(c => c.name === "No Issue" || c.name === "OK").reduce((s, c) => s + c.vehicles.length, 0) / wipVehicles.length
+      : 0;
+    drawGauge(doc, 14 + gaugeSpacing * 2.5, gaugeY, 14, okPct, "OK Rate", `${(okPct * 100).toFixed(0)}%`, gaugeColor(1 - okPct));
+    y = gaugeY + 22;
+
+    // === MODEL DISTRIBUTION CHART ===
+    const modelCounts: Record<string, number> = {};
+    wipVehicles.forEach(v => {
+      const model = v.lot_model || "Unknown";
+      modelCounts[model] = (modelCounts[model] ?? 0) + 1;
+    });
+    const modelEntries = Object.entries(modelCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    if (modelEntries.length > 0) {
+      needSpace(35);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(30, 41, 59);
+      doc.text("WIP by Model", 14, y);
+      y += 3;
+      const modelChartData = modelEntries.map((e, i) => ({
+        label: e[0] || "Unknown",
+        value: e[1],
+        color: chartColors[i % chartColors.length],
+      }));
+      drawBarChart(doc, 14, y, pageWidth / 2 - 20, 40, modelChartData);
+
+      // Pie chart for models on right
+      if (modelChartData.length > 0) {
+        const mpCx = pageWidth / 2 + 30;
+        const mpCy = y + 22;
+        drawPieChart(doc, mpCx, mpCy, 20, modelChartData);
+        drawPieLegend(doc, mpCx + 30, mpCy - modelChartData.length * 4, modelChartData);
+      }
+      y += Math.max(modelEntries.length * 15 + 5, 40);
+    }
 
     // === DETAILED BREAKDOWN ===
     categories.forEach(cat => {
@@ -394,11 +553,12 @@ Deno.serve(async (req: Request) => {
       doc.text(`WIP Details: ${cat.name} (${cat.vehicles.length} Cars)`, 14, y);
       y += 5;
 
-      const detailHeaders = ["VIN", "Model", "Color", "Issue", "Entry Time"];
+      const detailHeaders = ["VIN", "Model", "Color", "Category", "Issue", "Entry Time"];
       const detailRows = cat.vehicles.map(v => [
         v.vin,
         v.lot_model || "—",
         v.actual_color_id ? (colorMap[v.actual_color_id] || "—") : "—",
+        (v as any).category || cat.name,
         (v as any).issue || "—",
         formatDateTime(v.entry_time),
       ]);
@@ -414,11 +574,12 @@ Deno.serve(async (req: Request) => {
           0: { cellWidth: 50 },
           1: { cellWidth: 25 },
           2: { cellWidth: 15 },
-          3: { cellWidth: 120 },
-          4: { cellWidth: 38 },
+          3: { cellWidth: 22 },
+          4: { cellWidth: 98 },
+          5: { cellWidth: 38 },
         },
         didParseCell: (data: any) => {
-          if (hasArabicFont && data.section === "body" && data.column.index === 3) {
+          if (hasArabicFont && data.section === "body" && data.column.index === 4) {
             const cellText = data.cell.raw;
             if (cellText && hasArabic(cellText)) {
               data.cell.styles.font = "Amiri";
