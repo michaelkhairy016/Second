@@ -39,7 +39,7 @@ const DEPT_STATION: Record<string, string> = { overview: "", shortages: "shortag
 const DEPT_LABEL: Record<string, string> = { overview: "Overview", shortages: "Shortages", pbs: "PBS", wbs: "WBS" };
 
 const SHORTAGE_CATEGORIES = ["PLASTICS PART", "Local", "CKD", "Scratches"] as const;
-const PBS_CATEGORIES = ["No Issue", "CKD", "Local", "Plastics", "Dismantled"] as const;
+const PBS_CATEGORIES = ["No Issue", "CKD", "Local", "Dismantled"] as const;
 const WBS_CATEGORIES = ["Issue", "OK"] as const;
 
 function mapShortageReason(raw: string | null): string {
@@ -192,7 +192,6 @@ function Page() {
     if (!issueList || issueList.length === 0) return "No Issue";
     const text = issueList.join(" ").toLowerCase();
     if (text.includes("ckd")) return "CKD";
-    if (text.includes("plastic") || text.includes("سبيلر")) return "Plastics";
     if (text.includes("dismant") || text.includes("فك") || text.includes("تجميع")) return "Dismantled";
     return "Local";
   }, [vehicleIssues]);
@@ -237,7 +236,7 @@ function Page() {
       const monthSh = monthlyShortages;
       const monthMap: Record<string, Record<string, number>> = { In: {}, Out: {} };
       cats.forEach(c => { monthMap.In[c] = 0; monthMap.Out[c] = 0; });
-      monthSh.filter(s => s.status === "open").forEach(s => {
+      monthSh.forEach(s => {
         const cat = mapShortageReason(s.shortage_reason);
         monthMap.In[cat] = (monthMap.In[cat] ?? 0) + 1;
       });
@@ -354,7 +353,7 @@ function Page() {
   }, [dayEvents, vModel, vehicles, vinSearch, vehicleIssues, vehicleShortageCategory]);
 
   // Build vehicle detail rows for cell dialog
-  const buildCellRows = useCallback((category: string, direction: "in" | "out" | "wip"): { vin: string; model: string; station: string | null; issue: string }[] => {
+  const buildCellRows = useCallback((category: string, direction: "in" | "out" | "wip", period: "today" | "month" = "today"): { vin: string; model: string; station: string | null; issue: string }[] => {
     const vinMap = new Map<string, string>();
     vehicles.forEach(v => vinMap.set(v.id, v.vin));
 
@@ -375,11 +374,18 @@ function Page() {
         }));
     }
 
-    // For shortages tab: use shortages table directly (same source as report counts)
+    // For shortages tab: use shortages table directly
     if (activeDept === "shortages") {
-      const sourceShortages = direction === "in"
-        ? shortages // all shortages created today (from date-filtered query)
-        : shortagesClearedToday; // shortages cleared today (by cleared_at)
+      let sourceShortages: ShortageRow[];
+      if (period === "month") {
+        sourceShortages = direction === "in"
+          ? monthlyShortages
+          : monthlyShortages.filter(s => s.status === "cleared");
+      } else {
+        sourceShortages = direction === "in"
+          ? shortages
+          : shortagesClearedToday;
+      }
       return sourceShortages
         .filter(s => mapShortageReason(s.shortage_reason) === category)
         .map(s => ({
@@ -390,8 +396,9 @@ function Page() {
         }));
     }
 
-    // For PBS/WBS: use station_events as before
-    const sourceEvents = direction === "in" ? dayEvents.filter(e => e.kind === "in") : dayEvents.filter(e => e.kind === "out");
+    // For PBS/WBS: use station_events
+    const evts = period === "month" ? monthDayEvents : dayEvents;
+    const sourceEvents = direction === "in" ? evts.filter(e => e.kind === "in") : evts.filter(e => e.kind === "out");
     return sourceEvents
       .filter(e => {
         if (activeDept === "pbs") return classifyPbs(e.vehicle_id) === category;
@@ -403,7 +410,7 @@ function Page() {
         station: null,
         issue: (vehicleIssues.get(e.vehicle_id) ?? []).join("; "),
       }));
-  }, [wipVehicles, dayEvents, activeDept, vehicleIssues, vehicleShortageCategory, vModel, vehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday]);
+  }, [wipVehicles, dayEvents, monthDayEvents, activeDept, vehicleIssues, vehicleShortageCategory, vModel, vehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday, monthlyShortages]);
 
   const downloadReport = async () => {
     setReportBusy(true);
@@ -569,11 +576,11 @@ function Page() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
                   <div className="bg-card rounded-lg border p-4">
                     <h3 className="font-bold text-lg text-center mb-3">Today's Report</h3>
-                    <ReportTable cats={cats} data={dayMap} onCellClick={(cat, dir) => setCellDialog({ title: `${cat} — ${dir === "in" ? "In Today" : "Out Today"}`, rows: buildCellRows(cat, dir) })} />
+                    <ReportTable cats={cats} data={dayMap} onCellClick={(cat, dir) => setCellDialog({ title: `${cat} — ${dir === "in" ? "In Today" : "Out Today"}`, rows: buildCellRows(cat, dir, "today") })} />
                   </div>
                   <div className="bg-card rounded-lg border p-4">
                     <h3 className="font-bold text-lg text-center mb-3">Monthly Report</h3>
-                    <ReportTable cats={cats} data={monthMap} onCellClick={() => {}} />
+                    <ReportTable cats={cats} data={monthMap} onCellClick={(cat, dir) => setCellDialog({ title: `${cat} — ${dir === "in" ? "In Month" : "Out Month"}`, rows: buildCellRows(cat, dir, "month") })} />
                   </div>
                   <div className="bg-card rounded-lg border p-4 lg:col-span-2 xl:col-span-1">
                     <h3 className="font-bold text-lg text-center mb-3">WIP Summary</h3>
@@ -657,7 +664,7 @@ function Page() {
                                               <tr key={v.id}>
                                                 <td className="p-1 font-mono">{v.vin}</td>
                                                 <td className="p-1">{stationByCode(v.current_station ?? "")?.label ?? "—"}</td>
-                                                <td className="p-1">{(vehicleIssues.get(v.id) ?? []).join("; ") || <Badge variant="success" className="text-[10px]">OK</Badge>}</td>
+                                                <td className="p-1">{(vehicleIssues.get(v.id) ?? []).join("; ") || (d === "shortages" ? <span className="text-muted-foreground">—</span> : <Badge variant="success" className="text-[10px]">OK</Badge>)}</td>
                                                 <td className="p-1">{vehicleShortageCategory.get(v.id) ?? "—"}</td>
                                               </tr>
                                             ))}
@@ -705,7 +712,7 @@ function Page() {
                               <td className="p-2">{new Date(r.recorded_at).toLocaleTimeString()}</td>
                               <td className="p-2 font-mono text-xs">{r.vin}</td>
                               <td className="p-2">{r.model}</td>
-                              <td className="p-2 text-xs">{r.issue ? <Badge variant="destructive" className="text-[10px]">{r.issue}</Badge> : <Badge variant="success" className="text-[10px]">OK</Badge>}</td>
+                              <td className="p-2 text-xs">{r.issue ? <Badge variant="destructive" className="text-[10px]">{r.issue}</Badge> : (d === "shortages" ? <span className="text-muted-foreground">—</span> : <Badge variant="success" className="text-[10px]">OK</Badge>)}</td>
                               <td className="p-2 text-xs">{r.shortage ? <Badge variant="warning" className="text-[10px]">{r.shortage}</Badge> : "—"}</td>
                               <td className="p-2 text-center">
                                 <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${r.kind === "in" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"}`}>
@@ -748,7 +755,7 @@ function Page() {
                       <td className="p-2 font-mono text-xs">{r.vin}</td>
                       <td className="p-2">{r.model}</td>
                       <td className="p-2">{stationByCode(r.station ?? "")?.label ?? "—"}</td>
-                      <td className="p-2 text-xs">{r.issue ? <Badge variant="destructive" className="text-[10px]">{r.issue}</Badge> : <Badge variant="success" className="text-[10px]">OK</Badge>}</td>
+                      <td className="p-2 text-xs">{r.issue ? <Badge variant="destructive" className="text-[10px]">{r.issue}</Badge> : (activeDept === "shortages" ? <span className="text-muted-foreground">—</span> : <Badge variant="success" className="text-[10px]">OK</Badge>)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -773,6 +780,7 @@ type OverviewProps = {
 };
 
 function OverviewSection({ events, vehicles, issues, shortages, allOpenShortages, lots, vModel, selectedDate, classifyPbs, classifyWbs, monthStart, vehicleIssues, vehicleShortageCategory }: OverviewProps) {
+  const [overviewDialog, setOverviewDialog] = useState<{ title: string; rows: { vin: string; model: string; station: string | null; issue: string }[] } | null>(null);
   const toLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   const today = toLocal(new Date());
   const dayStart = `${selectedDate}T00:00:00`;
@@ -883,15 +891,34 @@ function OverviewSection({ events, vehicles, issues, shortages, allOpenShortages
 
       {/* Per-Station Report Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {stationReports.map(sr => (
-          <div key={sr.station} className="bg-card rounded-lg border p-4">
-            <h3 className="font-bold text-center mb-3" style={{ color: stationColors[sr.station] }}>{sr.label}</h3>
-            <h4 className="text-xs font-semibold text-muted-foreground text-center mb-2">Today's Report</h4>
-            <ReportTable cats={sr.cats} data={sr.dayMap} onCellClick={() => {}} />
-            <h4 className="text-xs font-semibold text-muted-foreground text-center mt-3 mb-2">WIP Summary</h4>
-            <WipTable cats={sr.cats} data={sr.wipMap} onCellClick={() => {}} />
-          </div>
-        ))}
+        {stationReports.map(sr => {
+          const classify = (vId: string) => {
+            if (sr.station === "shortage") return vehicleShortageCategory.get(vId) ?? "CKD";
+            if (sr.station === "pbs") return classifyPbs(vId);
+            return classifyWbs(vId);
+          };
+          const buildRows = (cat: string, dir: "in" | "out" | "wip") => {
+            const vinMap = new Map<string, string>();
+            vehicles.forEach(v => vinMap.set(v.id, v.vin));
+            if (dir === "wip") {
+              return vehicles.filter(v => v.current_station === sr.station && classify(v.id) === cat)
+                .map(v => ({ vin: v.vin, model: vModel.get(v.id) || "—", station: v.current_station, issue: (vehicleIssues.get(v.id) ?? []).join("; ") }));
+            }
+            const dayEvts = events.filter(e => e.station === sr.station);
+            const evts = dir === "in" ? dayEvts.filter(e => e.kind === "in") : dayEvts.filter(e => e.kind === "out");
+            return evts.filter(e => classify(e.vehicle_id) === cat)
+              .map(e => ({ vin: vinMap.get(e.vehicle_id) ?? "—", model: vModel.get(e.vehicle_id) || "—", station: null, issue: (vehicleIssues.get(e.vehicle_id) ?? []).join("; ") }));
+          };
+          return (
+            <div key={sr.station} className="bg-card rounded-lg border p-4">
+              <h3 className="font-bold text-center mb-3" style={{ color: stationColors[sr.station] }}>{sr.label}</h3>
+              <h4 className="text-xs font-semibold text-muted-foreground text-center mb-2">Today's Report</h4>
+              <ReportTable cats={sr.cats} data={sr.dayMap} onCellClick={(cat, dir) => setOverviewDialog({ title: `${sr.label} — ${cat} — ${dir === "in" ? "In Today" : "Out Today"}`, rows: buildRows(cat, dir) })} />
+              <h4 className="text-xs font-semibold text-muted-foreground text-center mt-3 mb-2">WIP Summary</h4>
+              <WipTable cats={sr.cats} data={sr.wipMap} onCellClick={(cat) => setOverviewDialog({ title: `${sr.label} — ${cat} — WIP`, rows: buildRows(cat, "wip") })} />
+            </div>
+          );
+        })}
       </div>
 
       {/* Charts */}
@@ -967,6 +994,41 @@ function OverviewSection({ events, vehicles, issues, shortages, allOpenShortages
           )}
         </div>
       </div>
+
+      {/* Overview Drilldown Dialog */}
+      <Dialog open={!!overviewDialog} onOpenChange={() => setOverviewDialog(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle>{overviewDialog?.title ?? ""}</DialogTitle>
+          </DialogHeader>
+          <div className="overflow-y-auto max-h-[60vh]">
+            {overviewDialog && overviewDialog.rows.length > 0 ? (
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-card">
+                  <tr className="bg-muted">
+                    <th className="p-2 text-left font-semibold">VIN</th>
+                    <th className="p-2 text-left font-semibold">Model</th>
+                    <th className="p-2 text-left font-semibold">Station</th>
+                    <th className="p-2 text-left font-semibold">Issue</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {overviewDialog.rows.map((r, i) => (
+                    <tr key={i}>
+                      <td className="p-2 font-mono text-xs">{r.vin}</td>
+                      <td className="p-2">{r.model}</td>
+                      <td className="p-2">{stationByCode(r.station ?? "")?.label ?? "—"}</td>
+                      <td className="p-2 text-xs">{r.issue || <span className="text-muted-foreground">—</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-4">No vehicles found.</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
