@@ -32,11 +32,11 @@ type VehicleRow = { id: string; current_station: string | null; lot_id: string |
 type LotRow = { id: string; model: string };
 type IssueRow = { id: string; vehicle_id: string | null; status: string; title: string };
 
-const DEPARTMENTS = ["overview", "shortages", "pbs", "wbs"] as const;
+const DEPARTMENTS = ["overview", "shortages", "pbs", "wbs", "delayed"] as const;
 type Dept = typeof DEPARTMENTS[number];
 
-const DEPT_STATION: Record<string, string> = { overview: "", shortages: "shortage", pbs: "pbs", wbs: "wbs" };
-const DEPT_LABEL: Record<string, string> = { overview: "Overview", shortages: "Shortages", pbs: "PBS", wbs: "WBS" };
+const DEPT_STATION: Record<string, string> = { overview: "", shortages: "shortage", pbs: "pbs", wbs: "wbs", delayed: "" };
+const DEPT_LABEL: Record<string, string> = { overview: "Overview", shortages: "Shortages", pbs: "PBS", wbs: "WBS", delayed: "Delayed" };
 
 const SHORTAGE_CATEGORIES = ["PLASTICS PART", "Local", "CKD", "Scratches"] as const;
 const PBS_CATEGORIES = ["No Issue", "CKD", "Local", "Dismantled"] as const;
@@ -66,7 +66,7 @@ function Page() {
   const [live, setLive] = useState(true);
   const [reportBusy, setReportBusy] = useState(false);
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
-  const [cellDialog, setCellDialog] = useState<{ title: string; rows: { vin: string; model: string; station: string | null; issue: string }[] } | null>(null);
+  const [cellDialog, setCellDialog] = useState<{ title: string; rows: { vin: string; model: string; station: string | null; issue: string; category?: string; enteredAt?: string | null }[] } | null>(null);
 
   const [events, setEvents] = useState<EventRow[]>([]);
   const [shortages, setShortages] = useState<ShortageRow[]>([]);
@@ -198,25 +198,46 @@ function Page() {
 
   const classifyWbs = useCallback((vId: string) => vehicleIssues.has(vId) ? "Issue" : "OK", [vehicleIssues]);
 
-  const delayedWip = useMemo(() => {
+  // Build a WIP row for a vehicle at a given station
+  const buildWipRow = useCallback((v: VehicleRow, station: string) => {
+    const wh = workingHoursMap.get(v.id);
+    const hours = wh?.working_hours ?? 0;
+    const workingDays = wh?.working_days ?? 0;
+    const enteredAt = wh?.entered_at ?? null;
+    const model = vModel.get(v.id) || "—";
+    let category = "OK";
+    if (station === "shortage") category = vehicleShortageCategory.get(v.id) ?? "CKD";
+    else if (station === "pbs") category = classifyPbs(v.id);
+    else if (station === "wbs") category = classifyWbs(v.id);
+    let issueText = "";
+    if (station === "shortage") {
+      const openSh = allOpenShortages.find(s => s.vehicle_id === v.id);
+      issueText = openSh
+        ? [(openSh.parts || []).join(", "), openSh.shortage_reason].filter(Boolean).join(" — ")
+        : "Parts shortage";
+    } else {
+      issueText = (vehicleIssues.get(v.id) ?? []).join("; ");
+    }
+    return { vin: v.vin, model, category, hours, workingDays, enteredAt, issue: issueText, vehicleId: v.id, station };
+  }, [workingHoursMap, vModel, vehicleShortageCategory, classifyPbs, classifyWbs, allOpenShortages, vehicleIssues]);
+
+  // Live WIP for current station tab — ALL vehicles, no delay filter
+  const liveWip = useMemo(() => {
     return wipVehicles
-      .map(v => {
-        const wh = workingHoursMap.get(v.id);
-        const hours = wh?.working_hours ?? 0;
-        const workingDays = wh?.working_days ?? 0;
-        const enteredAt = wh?.entered_at ?? null;
-        const model = vModel.get(v.id) || "—";
-        let category = "OK";
-        if (activeDept === "shortages") category = vehicleShortageCategory.get(v.id) ?? "CKD";
-        else if (activeDept === "pbs") category = classifyPbs(v.id);
-        else if (activeDept === "wbs") category = classifyWbs(v.id);
-        const issueList = vehicleIssues.get(v.id) ?? [];
-        return { vin: v.vin, model, category, hours, workingDays, enteredAt, issue: issueList.join("; "), vehicleId: v.id };
-      })
-      .filter(v => delayThreshold > 0 ? v.hours > delayThreshold : true)
+      .map(v => buildWipRow(v, station))
       .filter(v => !searchVidSet || searchVidSet.has(v.vehicleId))
       .sort((a, b) => b.hours - a.hours);
-  }, [wipVehicles, workingHoursMap, delayThreshold, activeDept, vModel, vehicleIssues, vehicleShortageCategory, searchVidSet, classifyPbs, classifyWbs]);
+  }, [wipVehicles, buildWipRow, station, searchVidSet]);
+
+  // Delayed WIP across all 3 stations for Delayed tab
+  const delayedWip = useMemo(() => {
+    const delayStations = ["shortage", "pbs", "wbs"];
+    return vehicles
+      .filter(v => delayStations.includes(v.current_station ?? "") && (delayThreshold <= 0 || (() => { const wh = workingHoursMap.get(v.id); return (wh?.working_hours ?? 0) > delayThreshold; })()))
+      .filter(v => !searchVidSet || searchVidSet.has(v.id))
+      .map(v => buildWipRow(v, v.current_station ?? ""))
+      .sort((a, b) => b.hours - a.hours);
+  }, [vehicles, workingHoursMap, delayThreshold, buildWipRow, searchVidSet]);
 
   const buildReportTable = useMemo(() => {
     if (activeDept === "shortages") {
@@ -362,16 +383,29 @@ function Page() {
         .filter(v => {
           let cat = "OK";
           if (activeDept === "shortages") cat = vehicleShortageCategory.get(v.id) ?? "CKD";
-          else if (activeDept === "pbs") cat = classifyPbs(v.id);
+          else if (activeDept === "pbs") category = classifyPbs(v.id);
           else if (activeDept === "wbs") cat = classifyWbs(v.id);
           return cat === category;
         })
-        .map(v => ({
-          vin: v.vin,
-          model: vModel.get(v.id) || "—",
-          station: v.current_station,
-          issue: (vehicleIssues.get(v.id) ?? []).join("; "),
-        }));
+        .map(v => {
+          // For shortage: show shortage parts/reason as issue
+          let issueText = (vehicleIssues.get(v.id) ?? []).join("; ");
+          if (activeDept === "shortages") {
+            const openShortage = allOpenShortages.find(s => s.vehicle_id === v.id);
+            issueText = openShortage
+              ? [(openShortage.parts || []).join(", "), openShortage.shortage_reason].filter(Boolean).join(" — ")
+              : "Parts shortage";
+          }
+          const wh = workingHoursMap.get(v.id);
+          return {
+            vin: v.vin,
+            model: vModel.get(v.id) || "—",
+            station: v.current_station,
+            issue: issueText,
+            category,
+            enteredAt: wh?.entered_at ?? null,
+          };
+        });
     }
 
     // For shortages tab: use shortages table directly
@@ -494,8 +528,6 @@ function Page() {
           </div>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <label className="text-sm font-medium">Delay (h):</label>
-          <Input type="number" value={delayThreshold} onChange={e => setDelayThreshold(Number(e.target.value) || 24)} className="w-20" />
           <Button size="sm" onClick={downloadReport} disabled={reportBusy} className="gap-2 bg-teal-600 hover:bg-teal-700">
             {reportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Download Report
           </Button>
@@ -521,6 +553,8 @@ function Page() {
                 classifyPbs={classifyPbs} classifyWbs={classifyWbs}
                 monthStart={monthStart} vehicleIssues={vehicleIssues} vehicleShortageCategory={vehicleShortageCategory}
               />
+            ) : d === "delayed" ? (
+              <DelayedSection delayThreshold={delayThreshold} setDelayThreshold={setDelayThreshold} delayedWip={delayedWip} />
             ) : (
               <>
                 {/* Stat Boxes */}
@@ -533,44 +567,48 @@ function Page() {
                   <StatBox label={d === "shortages" ? "Open Shortages" : "Not OK (Issues)"} value={d === activeDept ? (d === "shortages" ? allOpenShortages.length : wipVehicles.filter(v => vehicleIssues.has(v.id)).length) : 0} color="red" />
                 </div>
 
-                {/* Delayed / Live WIP */}
-                {delayedWip.length > 0 && (
-                  <div className="bg-card rounded-lg border p-4">
-                    <h3 className={`font-bold text-lg text-center mb-4 ${delayThreshold > 0 ? "text-destructive" : "text-foreground"}`}>
-                      {delayThreshold > 0 ? `Delayed WIP Cars (> ${delayThreshold} working hours)` : "Live WIP (All Cars)"}
+                {/* Live WIP Table — Always Visible, All Vehicles */}
+                <div className="bg-card rounded-lg border p-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-bold text-lg text-foreground">
+                      {DEPT_LABEL[d]} — Live WIP ({liveWip.length} cars)
                     </h3>
-                    <div className="overflow-x-auto">
+                  </div>
+                  {liveWip.length > 0 ? (
+                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                       <table className="w-full text-left text-sm">
-                        <thead>
+                        <thead className="sticky top-0 bg-card">
                           <tr className="bg-muted">
                             <th className="p-2 font-semibold">VIN</th>
                             <th className="p-2 font-semibold">Model</th>
                             <th className="p-2 font-semibold">Category</th>
-                            <th className="p-2 font-semibold">Issue</th>
+                            <th className="p-2 font-semibold">Issue / Shortage Details</th>
                             <th className="p-2 font-semibold">Entry Date/Time</th>
                             <th className="p-2 font-semibold">Working Hours</th>
                             <th className="p-2 font-semibold">Working Days</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y">
-                          {delayedWip.map((r, i) => (
-                            <tr key={i}>
+                          {liveWip.map((r, i) => (
+                            <tr key={i} className={r.hours > 24 ? "bg-red-50 dark:bg-red-950/20" : ""}>
                               <td className="p-2 font-mono text-xs">{r.vin}</td>
                               <td className="p-2">{r.model}</td>
                               <td className="p-2"><Badge variant="secondary" className="text-[10px]">{r.category}</Badge></td>
                               <td className="p-2 text-xs">
-                                {r.issue ? <span className="text-muted-foreground">{r.issue}</span> : <span className="text-muted-foreground">—</span>}
+                                {r.issue ? <span className="text-foreground">{r.issue}</span> : <span className="text-muted-foreground">—</span>}
                               </td>
                               <td className="p-2 text-xs text-muted-foreground">{r.enteredAt ? new Date(r.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(r.enteredAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—"}</td>
-                              <td className={`p-2 font-bold ${delayThreshold > 0 ? "text-destructive" : "text-foreground"}`}>{r.hours.toFixed(1)}h</td>
+                              <td className={`p-2 font-bold ${r.hours > 24 ? "text-destructive" : "text-foreground"}`}>{r.hours.toFixed(1)}h</td>
                               <td className="p-2">{r.workingDays}d</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <p className="text-center text-muted-foreground py-8">No vehicles in WIP at this station.</p>
+                  )}
+                </div>
 
                 {/* Report Tables Grid */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -734,7 +772,7 @@ function Page() {
 
       {/* Cell Detail Dialog */}
       <Dialog open={!!cellDialog} onOpenChange={() => setCellDialog(null)}>
-        <DialogContent className="max-w-2xl max-h-[80vh]">
+        <DialogContent className="max-w-3xl max-h-[80vh]">
           <DialogHeader>
             <DialogTitle>{cellDialog?.title ?? ""}</DialogTitle>
           </DialogHeader>
@@ -745,8 +783,9 @@ function Page() {
                   <tr className="bg-muted">
                     <th className="p-2 text-left font-semibold">VIN</th>
                     <th className="p-2 text-left font-semibold">Model</th>
-                    <th className="p-2 text-left font-semibold">Station</th>
-                    <th className="p-2 text-left font-semibold">Issue</th>
+                    <th className="p-2 text-left font-semibold">Category</th>
+                    <th className="p-2 text-left font-semibold">Issue / Details</th>
+                    <th className="p-2 text-left font-semibold">Entry Date/Time</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -754,8 +793,9 @@ function Page() {
                     <tr key={i}>
                       <td className="p-2 font-mono text-xs">{r.vin}</td>
                       <td className="p-2">{r.model}</td>
-                      <td className="p-2">{stationByCode(r.station ?? "")?.label ?? "—"}</td>
+                      <td className="p-2"><Badge variant="secondary" className="text-[10px]">{r.category || (activeDept === "shortages" ? "—" : "OK")}</Badge></td>
                       <td className="p-2 text-xs">{r.issue ? <Badge variant="destructive" className="text-[10px]">{r.issue}</Badge> : (activeDept === "shortages" ? <span className="text-muted-foreground">—</span> : <Badge variant="success" className="text-[10px]">OK</Badge>)}</td>
+                      <td className="p-2 text-xs text-muted-foreground">{r.enteredAt ? new Date(r.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(r.enteredAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1029,6 +1069,83 @@ function OverviewSection({ events, vehicles, issues, shortages, allOpenShortages
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+type DelayedRow = { vin: string; model: string; category: string; hours: number; workingDays: number; enteredAt: string | null; issue: string; vehicleId: string; station: string };
+function DelayedSection({ delayThreshold, setDelayThreshold, delayedWip }: { delayThreshold: number; setDelayThreshold: (v: number) => void; delayedWip: DelayedRow[] }) {
+  const stationLabels: Record<string, string> = { shortage: "Shortages", pbs: "PBS", wbs: "WBS" };
+  const stationColors: Record<string, string> = { shortage: "#d35400", pbs: "#27ae60", wbs: "#2980b9" };
+  const delayStations = ["shortage", "pbs", "wbs"] as const;
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, DelayedRow[]>();
+    delayStations.forEach(st => map.set(st, []));
+    delayedWip.forEach(r => {
+      const list = map.get(r.station);
+      if (list) list.push(r);
+    });
+    return map;
+  }, [delayedWip]);
+
+  const totalDelayed = delayedWip.length;
+
+  return (
+    <div className="space-y-6">
+      {/* Controls */}
+      <div className="bg-card rounded-lg border p-4 flex items-center gap-4 flex-wrap">
+        <h3 className="font-bold text-lg text-destructive">Delayed WIP Monitor</h3>
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium">Threshold (hours):</label>
+          <Input type="number" value={delayThreshold} onChange={e => setDelayThreshold(Number(e.target.value) || 24)} className="w-24" />
+        </div>
+        <Badge variant="destructive">{totalDelayed} vehicles delayed &gt; {delayThreshold}h</Badge>
+      </div>
+
+      {/* Sub-tables per station */}
+      {delayStations.map(st => {
+        const rows = grouped.get(st) ?? [];
+        return (
+          <div key={st} className="bg-card rounded-lg border p-4">
+            <h3 className="font-bold text-center mb-3" style={{ color: stationColors[st] }}>
+              {stationLabels[st]} — {rows.length} delayed car{rows.length !== 1 ? "s" : ""}
+            </h3>
+            {rows.length > 0 ? (
+              <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="sticky top-0 bg-card">
+                    <tr className="bg-muted">
+                      <th className="p-2 font-semibold">VIN</th>
+                      <th className="p-2 font-semibold">Model</th>
+                      <th className="p-2 font-semibold">Category</th>
+                      <th className="p-2 font-semibold">Issue / Shortage Details</th>
+                      <th className="p-2 font-semibold">Entry Date/Time</th>
+                      <th className="p-2 font-semibold">Working Hours</th>
+                      <th className="p-2 font-semibold">Working Days</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {rows.map((r, i) => (
+                      <tr key={i} className="bg-red-50 dark:bg-red-950/20">
+                        <td className="p-2 font-mono text-xs">{r.vin}</td>
+                        <td className="p-2">{r.model}</td>
+                        <td className="p-2"><Badge variant="secondary" className="text-[10px]">{r.category}</Badge></td>
+                        <td className="p-2 text-xs">{r.issue ? <span className="text-foreground">{r.issue}</span> : <span className="text-muted-foreground">—</span>}</td>
+                        <td className="p-2 text-xs text-muted-foreground">{r.enteredAt ? new Date(r.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(r.enteredAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—"}</td>
+                        <td className="p-2 font-bold text-destructive">{r.hours.toFixed(1)}h</td>
+                        <td className="p-2">{r.workingDays}d</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-center text-muted-foreground py-4">No delayed vehicles at {stationLabels[st]}.</p>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
