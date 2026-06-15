@@ -28,7 +28,7 @@ type ShortageRow = {
   id: string; vehicle_id: string; parts: string[]; shortage_reason: string | null; part_type: string | null;
   status: string; created_at: string; vehicle: { vin: string; vin_suffix: string } | null;
 };
-type VehicleRow = { id: string; current_station: string | null; lot_id: string | null; vin: string; vin_suffix: string; updated_at: string; contract_model: string | null };
+type VehicleRow = { id: string; current_station: string | null; lot_id: string | null; vin: string; vin_suffix: string; updated_at: string; contract_model: string | null; completed_at: string | null };
 type LotRow = { id: string; model: string };
 type IssueRow = { id: string; vehicle_id: string | null; status: string; title: string };
 
@@ -72,8 +72,8 @@ function Page() {
   const [shortages, setShortages] = useState<ShortageRow[]>([]);
   const [allOpenShortages, setAllOpenShortages] = useState<ShortageRow[]>([]);
   const [shortagesClearedToday, setShortagesClearedToday] = useState<ShortageRow[]>([]);
-  const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [allVehicles, setAllVehicles] = useState<VehicleRow[]>([]);
+  const [allHistoryEvents, setAllHistoryEvents] = useState<EventRow[]>([]);
   const [lots, setLots] = useState<LotRow[]>([]);
   const [issues, setIssues] = useState<IssueRow[]>([]);
   const [workingHoursMap, setWorkingHoursMap] = useState<Map<string, { entered_at: string; working_hours: number; working_days: number }>>(new Map());
@@ -90,6 +90,9 @@ function Page() {
     allVehicles.forEach(v => { m.set(v.id, v.contract_model || (v.lot_id && lotMap[v.lot_id]) || "Unknown"); });
     return m;
   }, [allVehicles, lotMap]);
+  // WIP = active (non-completed) vehicles. Derived from allVehicles so it is always populated
+  // regardless of the selected date — fixes PBS/WBS WIP summary showing empty on any date.
+  const vehicles = useMemo(() => allVehicles.filter(v => !v.completed_at), [allVehicles]);
 
   // Search filter: matching vehicle IDs
   const searchVidSet = useMemo(() => {
@@ -109,13 +112,10 @@ function Page() {
     const dayStart = `${selectedDate}T00:00:00`;
     const dayEnd = `${selectedDate}T23:59:59`;
 
-    const [evRes, shRes, vRes, lRes, iRes, mEvRes, mShRes, osRes, clRes, avRes] = await Promise.all([
-      supabase.from("station_events").select("station, kind, recorded_at, vehicle_id").gte("recorded_at", dayStart).lte("recorded_at", dayEnd),
+    const [evRes, shRes, lRes, iRes, mEvRes, mShRes, osRes, clRes, avRes] = await Promise.all([
+      // Today's events via unified RPC (carries vin/model/archived — no map dependency, no dashes)
+      supabase.rpc("get_production_events", { p_from: dayStart, p_to: dayEnd }),
       supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, vehicle:vehicles(vin, vin_suffix)").gte("created_at", dayStart).lte("created_at", dayEnd),
-      // WIP: only load live vehicles when viewing today; for past dates WIP section is historical (N/A)
-      isToday
-        ? supabase.from("vehicles").select("id, current_station, lot_id, vin, vin_suffix, updated_at, contract_model").is("completed_at", null)
-        : Promise.resolve({ data: [], error: null }),
       supabase.from("lots").select("id, model"),
       supabase.from("issues").select("id, vehicle_id, status, title").in("status", ["open", "in_progress"]),
       // Monthly events: full month range via unified RPC (includes archived vehicles)
@@ -123,14 +123,14 @@ function Page() {
       supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, vehicle:vehicles(vin, vin_suffix)").gte("created_at", `${monthStart}T00:00:00`).lte("created_at", monthEndDate),
       supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at").eq("status", "open"),
       supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, vin_suffix)").eq("status", "cleared").gte("cleared_at", dayStart).lte("cleared_at", dayEnd),
-      // ALL vehicles (incl. completed) for model resolution — monthly events
-      // reference completed vehicles whose data would otherwise show as "—".
-      supabase.from("vehicles").select("id, current_station, lot_id, vin, vin_suffix, updated_at, contract_model"),
+      // ALL vehicles (incl. completed) — single source for WIP + model resolution
+      supabase.from("vehicles").select("id, current_station, lot_id, vin, vin_suffix, updated_at, contract_model, completed_at"),
     ]);
 
-    setEvents((evRes.data ?? []) as EventRow[]);
+    if (avRes.error) console.error("[dashboard] vehicles query error:", avRes.error);
+
+    setEvents(((evRes.data ?? []) as unknown) as EventRow[]);
     setShortages((shRes.data ?? []) as unknown as ShortageRow[]);
-    setVehicles((vRes.data ?? []) as VehicleRow[]);
     setAllVehicles((avRes.data ?? []) as VehicleRow[]);
     setLots((lRes.data ?? []) as LotRow[]);
     setIssues((iRes.data ?? []) as IssueRow[]);
@@ -156,6 +156,16 @@ function Page() {
   };
 
   useEffect(() => { load(); }, [selectedDate]);
+  // All-history events for Vehicle Tracing (every movement, every date — not just today).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase.rpc("get_production_events", { p_from: "2024-01-01T00:00:00", p_to: "2030-12-31T23:59:59" });
+      if (error) { console.error("[dashboard] history events error:", error); return; }
+      if (!cancelled) setAllHistoryEvents(((data ?? []) as unknown) as EventRow[]);
+    })();
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => {
     if (!live) return;
     const ch = supabase.channel("dash")
@@ -219,7 +229,7 @@ function Page() {
     const hours = wh?.working_hours ?? 0;
     const workingDays = wh?.working_days ?? 0;
     const enteredAt = wh?.entered_at ?? null;
-    const model = vModel.get(v.id) || "—";
+    const model = v.contract_model || (v.lot_id && lotMap[v.lot_id]) || "—";
     let category = "OK";
     if (station === "shortage") category = vehicleShortageCategory.get(v.id) ?? "CKD";
     else if (station === "pbs") category = classifyPbs(v.id);
@@ -234,7 +244,7 @@ function Page() {
       issueText = (vehicleIssues.get(v.id) ?? []).join("; ");
     }
     return { vin: v.vin, model, category, hours, workingDays, enteredAt, issue: issueText, vehicleId: v.id, station };
-  }, [workingHoursMap, vModel, vehicleShortageCategory, classifyPbs, classifyWbs, allOpenShortages, vehicleIssues]);
+  }, [workingHoursMap, lotMap, vehicleShortageCategory, classifyPbs, classifyWbs, allOpenShortages, vehicleIssues]);
 
   // Live WIP for current station tab — ALL vehicles, no delay filter
   const liveWip = useMemo(() => {
@@ -354,19 +364,19 @@ function Page() {
   const modelAnalysis = useMemo(() => {
     const models = new Map<string, { inToday: number; outToday: number; wip: number; vinIds: string[] }>();
     dayEvents.filter(e => e.kind === "in").forEach(e => {
-      const m = vModel.get(e.vehicle_id);
+      const m = e.model || vModel.get(e.vehicle_id);
       if (m) { if (!models.has(m)) models.set(m, { inToday: 0, outToday: 0, wip: 0, vinIds: [] }); models.get(m)!.inToday++; models.get(m)!.vinIds.push(e.vehicle_id); }
     });
     dayEvents.filter(e => e.kind === "out").forEach(e => {
-      const m = vModel.get(e.vehicle_id);
+      const m = e.model || vModel.get(e.vehicle_id);
       if (m) { if (!models.has(m)) models.set(m, { inToday: 0, outToday: 0, wip: 0, vinIds: [] }); models.get(m)!.outToday++; }
     });
     wipVehicles.forEach(v => {
-      const m = vModel.get(v.id);
+      const m = v.contract_model || (v.lot_id && lotMap[v.lot_id]);
       if (m) { if (!models.has(m)) models.set(m, { inToday: 0, outToday: 0, wip: 0, vinIds: [] }); models.get(m)!.wip++; models.get(m)!.vinIds.push(v.id); }
     });
     return Array.from(models.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [dayEvents, wipVehicles, vModel]);
+  }, [dayEvents, wipVehicles, vModel, lotMap]);
 
   // Per-station model distribution (for chart in station tabs)
   const stationModelChart = useMemo(() => {
@@ -379,24 +389,25 @@ function Page() {
   }, [wipVehicles, vModel]);
 
   const vehicleTracing = useMemo(() => {
-    let rows = dayEvents.map(e => ({
-      vin: "—",
-      model: vModel.get(e.vehicle_id) || "—",
-      kind: e.kind,
-      recorded_at: e.recorded_at,
-      vehicle_id: e.vehicle_id,
-      issue: (vehicleIssues.get(e.vehicle_id) ?? []).join("; "),
-      shortage: vehicleShortageCategory.get(e.vehicle_id) ?? "",
-    }));
-    const vinMap = new Map<string, string>();
-    allVehicles.forEach(v => vinMap.set(v.id, v.vin));
-    rows.forEach(r => { r.vin = vinMap.get(r.vehicle_id) ?? "—"; });
+    // All-history movements for the current station tab (every date, not just today).
+    // Events come from the RPC so vin/model are embedded — no map lookup, no dashes.
+    let rows = allHistoryEvents
+      .filter(e => e.station === station)
+      .map(e => ({
+        vin: e.vin || "—",
+        model: e.model || "—",
+        kind: e.kind,
+        recorded_at: e.recorded_at,
+        vehicle_id: e.vehicle_id ?? "",
+        issue: e.archived ? "" : ((vehicleIssues.get(e.vehicle_id ?? "") ?? []).join("; ")),
+        shortage: e.archived ? "" : (vehicleShortageCategory.get(e.vehicle_id ?? "") ?? ""),
+      }));
     if (vinSearch.trim()) {
       const q = vinSearch.toLowerCase();
       rows = rows.filter(r => r.vin.toLowerCase().includes(q) || r.model.toLowerCase().includes(q));
     }
     return rows.sort((a, b) => new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime());
-  }, [dayEvents, vModel, allVehicles, vinSearch, vehicleIssues, vehicleShortageCategory]);
+  }, [allHistoryEvents, station, vinSearch, vehicleIssues, vehicleShortageCategory]);
 
   // Build vehicle detail rows for cell dialog
   const buildCellRows = useCallback((category: string, direction: "in" | "out" | "wip", period: "today" | "month" = "today"): { vin: string; model: string; station: string | null; issue: string }[] => {
@@ -424,7 +435,7 @@ function Page() {
           const wh = workingHoursMap.get(v.id);
           return {
             vin: v.vin,
-            model: vModel.get(v.id) || "—",
+            model: v.contract_model || (v.lot_id && lotMap[v.lot_id]) || "—",
             station: v.current_station,
             issue: issueText,
             category,
@@ -470,7 +481,7 @@ function Page() {
         station: null,
         issue: (vehicleIssues.get(e.vehicle_id) ?? []).join("; "),
       }));
-  }, [wipVehicles, dayEvents, monthDayEvents, activeDept, vehicleIssues, vehicleShortageCategory, vModel, allVehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday, monthlyShortages]);
+  }, [wipVehicles, dayEvents, monthDayEvents, activeDept, vehicleIssues, vehicleShortageCategory, vModel, lotMap, allVehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday, monthlyShortages]);
 
   const downloadReport = async (period: "day" | "month" = "day") => {
     setReportBusy(true);
@@ -546,7 +557,7 @@ function Page() {
             {live && <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-white" /></span>}
             {live ? "Go Live" : "Live Off"}
           </Button>
-          {!isToday && <Badge variant="outline" className="text-amber-600 border-amber-500/50 text-xs">Historical view — In/Out data for {selectedDate}, no live WIP</Badge>}
+          {!isToday && <Badge variant="outline" className="text-amber-600 border-amber-500/50 text-xs">Historical view — In/Out for {selectedDate} + live WIP</Badge>}
           <div className="flex-1 min-w-[180px] max-w-md">
             <div className="relative">
               <Input placeholder="Global VIN / Model Search..." value={vinSearch} onChange={e => setVinSearch(e.target.value)} className="pl-9" />
@@ -1045,8 +1056,11 @@ function OverviewSection({ events, vehicles, allVehicles, issues, shortages, all
             }
             const dayEvts = events.filter(e => e.station === sr.station);
             const evts = dir === "in" ? dayEvts.filter(e => e.kind === "in") : dayEvts.filter(e => e.kind === "out");
-            return evts.filter(e => classify(e.vehicle_id) === cat)
-              .map(e => ({ vin: vinMap.get(e.vehicle_id) ?? "—", model: vModel.get(e.vehicle_id) || "—", station: null, issue: (vehicleIssues.get(e.vehicle_id) ?? []).join("; ") }));
+            return evts.filter(e => {
+                if (e.archived) return cat === "No Issue" || cat === "OK";
+                return classify(e.vehicle_id) === cat;
+              })
+              .map(e => ({ vin: e.vin || (vinMap.get(e.vehicle_id) ?? "—"), model: e.model || vModel.get(e.vehicle_id) || "—", station: null, issue: e.archived ? "" : ((vehicleIssues.get(e.vehicle_id) ?? []).join("; ")) }));
           };
           return (
             <div key={sr.station} className="bg-card rounded-lg border p-4">
