@@ -136,13 +136,18 @@ function Page() {
     // Model counts
     const lots = lotsRes.data ?? [];
     const lotMap = Object.fromEntries(lots.map(l => [l.id, l.model]));
-    const { data: vsWithLot } = await supabase.from("vehicles").select("id, lot_id, current_station").is("completed_at", null);
+    const { data: vsWithLot } = await supabase.from("vehicles").select("id, lot_id, current_station, contract_model").is("completed_at", null);
     const vLot = vsWithLot ?? [];
+    // ALL vehicles (incl. completed) so events referencing completed vehicles resolve model.
+    const { data: allVs } = await supabase.from("vehicles").select("id, lot_id, contract_model");
     const modelMap: Record<string, { total: number; inProd: number; completed: number }> = {};
     const vModelMap = new Map<string, string>();
-    vLot.forEach(v => {
-      const model = (v.lot_id && lotMap[v.lot_id]) ?? "Unknown";
+    (allVs ?? []).forEach(v => {
+      const model = v.contract_model || (v.lot_id && lotMap[v.lot_id]) || "Unknown";
       vModelMap.set(v.id, model);
+    });
+    vLot.forEach(v => {
+      const model = v.contract_model || (v.lot_id && lotMap[v.lot_id]) || "Unknown";
       if (!modelMap[model]) modelMap[model] = { total: 0, inProd: 0, completed: 0 };
       modelMap[model].total++;
       if (v.current_station && v.current_station !== "warehouse" && v.current_station !== "pdi") modelMap[model].inProd++;

@@ -37,6 +37,18 @@ function drawBarChart(doc: any, x: number, y: number, w: number, h: number, data
   });
 }
 
+function drawArcSlice(doc: any, cx: number, cy: number, r: number, a1: number, a2: number, color: number[]) {
+  doc.setFillColor(color[0], color[1], color[2]);
+  doc.setDrawColor(color[0], color[1], color[2]);
+  const steps = Math.max(Math.ceil(Math.abs(a2 - a1) / 0.05), 3);
+  const points: number[][] = [[cx, cy]];
+  for (let i = 0; i <= steps; i++) {
+    const a = a1 + (i / steps) * (a2 - a1);
+    points.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  doc.lines(points.map(([x, y]) => [x - points[0][0], y - points[0][1]]), cx, cy, undefined, true, "F");
+}
+
 function drawPieChart(doc: any, cx: number, cy: number, r: number, data: { label: string; value: number; color: number[] }[]) {
   const total = data.reduce((s, d) => s + d.value, 0);
   if (total === 0) return;
@@ -44,18 +56,12 @@ function drawPieChart(doc: any, cx: number, cy: number, r: number, data: { label
 
   data.forEach((d) => {
     const sliceAngle = (d.value / total) * 2 * Math.PI;
-    doc.setFillColor(d.color[0], d.color[1], d.color[2]);
-    const steps = Math.max(Math.ceil(sliceAngle / 0.05), 2);
-    for (let i = 0; i < steps; i++) {
-      const a1 = angle + (i / steps) * sliceAngle;
-      const a2 = angle + ((i + 1) / steps) * sliceAngle;
-      doc.triangle(cx, cy, cx + r * Math.cos(a1), cy + r * Math.sin(a1), cx + r * Math.cos(a2), cy + r * Math.sin(a2), "F");
-    }
+    drawArcSlice(doc, cx, cy, r, angle, angle + sliceAngle, d.color);
     angle += sliceAngle;
   });
 
   doc.setFillColor(255, 255, 255);
-  doc.circle(cx, cy, r * 0.5, "F");
+  doc.ellipse(cx, cy, r * 0.5, r * 0.5, "F");
 
   doc.setFontSize(10);
   doc.setFont("helvetica", "bold");
@@ -91,24 +97,24 @@ function drawGauge(doc: any, cx: number, cy: number, r: number, pct: number, lab
   const totalAngle = endAngle - startAngle;
   const fillAngle = startAngle + totalAngle * Math.min(pct, 1);
 
-  const bgSteps = 40;
-  doc.setFillColor(226, 232, 240);
+  const bgSteps = 12;
   for (let i = 0; i < bgSteps; i++) {
     const a1 = startAngle + (i / bgSteps) * totalAngle;
     const a2 = startAngle + ((i + 1) / bgSteps) * totalAngle;
-    doc.triangle(cx, cy, cx + r * Math.cos(a1), cy + r * Math.sin(a1), cx + r * Math.cos(a2), cy + r * Math.sin(a2), "F");
+    drawArcSlice(doc, cx, cy, r, a1, a2, [226, 232, 240]);
   }
 
-  const fillSteps = Math.max(Math.ceil(((fillAngle - startAngle) / totalAngle) * bgSteps), 2);
-  doc.setFillColor(color[0], color[1], color[2]);
-  for (let i = 0; i < fillSteps; i++) {
-    const a1 = startAngle + (i / fillSteps) * (fillAngle - startAngle);
-    const a2 = startAngle + ((i + 1) / fillSteps) * (fillAngle - startAngle);
-    doc.triangle(cx, cy, cx + r * Math.cos(a1), cy + r * Math.sin(a1), cx + r * Math.cos(a2), cy + r * Math.sin(a2), "F");
+  if (pct > 0) {
+    const fillSteps = Math.max(Math.ceil(pct * bgSteps), 2);
+    for (let i = 0; i < fillSteps; i++) {
+      const a1 = startAngle + (i / fillSteps) * (fillAngle - startAngle);
+      const a2 = startAngle + ((i + 1) / fillSteps) * (fillAngle - startAngle);
+      drawArcSlice(doc, cx, cy, r, a1, a2, color);
+    }
   }
 
   doc.setFillColor(255, 255, 255);
-  doc.circle(cx, cy, r * 0.6, "F");
+  doc.ellipse(cx, cy, r * 0.6, r * 0.6, "F");
 
   doc.setFontSize(8);
   doc.setFont("helvetica", "bold");
@@ -142,25 +148,30 @@ Deno.serve(async (req: Request) => {
     const monthStart = reportDate.slice(0, 8) + "01";
     const [vehiclesRes, eventsRes, plansRes, lotsRes, mtdRes] = await Promise.all([
       supabase.from("vehicles").select("id, current_station, lot_id").is("completed_at", null),
-      supabase.from("station_events").select("station, kind, recorded_at, vehicle_id").gte("recorded_at", `${reportDate}T00:00:00`).lte("recorded_at", `${reportDate}T23:59:59`),
+      // Unified events RPC: active + archived vehicles (so archived contract
+      // vehicles are still counted). Each event row carries its resolved model.
+      supabase.rpc("get_production_events", { p_from: `${reportDate}T00:00:00`, p_to: `${reportDate}T23:59:59` }),
       supabase.from("production_plans").select("monthly_plan, daily_target, jph_target, model:models(name)").eq("month", monthStart),
       supabase.from("lots").select("id, model"),
       supabase.from("factory_calendar").select("working_hours").gte("date", monthStart).lte("date", reportDate).eq("is_working_day", true),
     ]);
 
     const vehicles = vehiclesRes.data ?? [];
-    const events = eventsRes.data ?? [];
+    const events = (eventsRes.data ?? []) as any[];
     const plans = plansRes.data ?? [];
     const lots = lotsRes.data ?? [];
     const lotMap = Object.fromEntries(lots.map((l: any) => [l.id, l.model]));
 
+    // WIP vehicles → model map (for WIP station counts only)
     const vModel = new Map<string, string>();
     vehicles.forEach((v: any) => {
-      if (v.lot_id && lotMap[v.lot_id]) vModel.set(v.id, lotMap[v.lot_id]);
+      const model = (v.lot_id && lotMap[v.lot_id]);
+      if (model) vModel.set(v.id, model);
     });
 
     const modelSet = new Set<string>();
-    vehicles.forEach((v: any) => { if (vModel.has(v.id)) modelSet.add(vModel.get(v.id)!); });
+    vModel.forEach(m => modelSet.add(m));
+    events.forEach((e: any) => { if (e.model) modelSet.add(e.model); });
     plans.forEach((p: any) => { if (p.model?.name) modelSet.add(p.model.name); });
     const models = Array.from(modelSet).sort();
 
@@ -178,7 +189,7 @@ Deno.serve(async (req: Request) => {
     const outsPerStationModel: Record<string, Record<string, number>> = {};
     stations.forEach(s => { outsPerStationModel[s.code] = {}; models.forEach(m => { outsPerStationModel[s.code][m] = 0; }); });
     events.filter((e: any) => e.kind === "out").forEach((e: any) => {
-      const model = vModel.get(e.vehicle_id);
+      const model = e.model;
       if (model && outsPerStationModel[e.station]) {
         outsPerStationModel[e.station][model] = (outsPerStationModel[e.station][model] ?? 0) + 1;
       }
@@ -187,7 +198,7 @@ Deno.serve(async (req: Request) => {
     const insPerStationModel: Record<string, Record<string, number>> = {};
     stations.forEach(s => { insPerStationModel[s.code] = {}; models.forEach(m => { insPerStationModel[s.code][m] = 0; }); });
     events.filter((e: any) => e.kind === "in").forEach((e: any) => {
-      const model = vModel.get(e.vehicle_id);
+      const model = e.model;
       if (model && insPerStationModel[e.station]) {
         insPerStationModel[e.station][model] = (insPerStationModel[e.station][model] ?? 0) + 1;
       }
@@ -385,7 +396,7 @@ Deno.serve(async (req: Request) => {
     // === MODEL DISTRIBUTION PIE CHART ===
     const modelOutCounts: Record<string, number> = {};
     events.filter((e: any) => e.kind === "out").forEach((e: any) => {
-      const model = vModel.get(e.vehicle_id);
+      const model = e.model;
       if (model) modelOutCounts[model] = (modelOutCounts[model] ?? 0) + 1;
     });
     const modelPieData = Object.entries(modelOutCounts).map(([name, value], i) => ({

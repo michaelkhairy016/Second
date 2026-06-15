@@ -141,6 +141,12 @@ export type Database = {
         Update: { cleared_at?: string | null; cleared_by?: string | null; created_at?: string | null; created_by?: string | null; id?: string; job_order_id?: string | null; notes?: string | null; restriction?: string; status?: string; stop_at_station?: Database["public"]["Enums"]["station_code"]; vehicle_id?: string }
         Relationships: [{ foreignKeyName: "vehicle_restrictions_job_order_id_fkey"; columns: ["job_order_id"]; isOneToOne: false; referencedRelation: "job_orders"; referencedColumns: ["id"] }, { foreignKeyName: "vehicle_restrictions_vehicle_id_fkey"; columns: ["vehicle_id"]; isOneToOne: false; referencedRelation: "vehicles"; referencedColumns: ["id"] }]
       }
+      user_presence: {
+        Row: { user_id: string; is_online: boolean; last_heartbeat: string; first_seen_today: string | null; total_active_seconds: number; updated_at: string }
+        Insert: { user_id: string; is_online?: boolean; last_heartbeat?: string; first_seen_today?: string | null; total_active_seconds?: number; updated_at?: string }
+        Update: { user_id?: string; is_online?: boolean; last_heartbeat?: string; first_seen_today?: string | null; total_active_seconds?: number; updated_at?: string }
+        Relationships: [{ foreignKeyName: "user_presence_user_id_fkey"; columns: ["user_id"]; isOneToOne: true; referencedRelation: "profiles"; referencedColumns: ["id"] }]
+      }
       vehicles: {
         Row: { actual_color_id: string | null; completed_at: string | null; contract_model: string | null; created_at: string; current_station: Database["public"]["Enums"]["station_code"] | null; id: string; is_lot_tail: boolean; job_order_id: string | null; lot_id: string | null; planned_color_id: string | null; tail_note: string | null; updated_at: string; vin: string; vin_suffix: string }
         Insert: { actual_color_id?: string | null; completed_at?: string | null; contract_model?: string | null; created_at?: string; current_station?: Database["public"]["Enums"]["station_code"] | null; id?: string; is_lot_tail?: boolean; job_order_id?: string | null; lot_id?: string | null; planned_color_id?: string | null; tail_note?: string | null; updated_at?: string; vin: string; vin_suffix: string }
@@ -153,11 +159,15 @@ export type Database = {
       archive_completed_vehicles: { Args: never; Returns: undefined }
       decrease_producible: { Args: { count_input: number; lot_id_input: string }; Returns: undefined }
       get_daily_status_data: { Args: never; Returns: Json }
+      get_production_events: { Args: { p_from: string; p_to: string }; Returns: { recorded_at: string; station: Database["public"]["Enums"]["station_code"]; kind: Database["public"]["Enums"]["event_kind"]; vehicle_id: string | null; vin: string | null; vin_suffix: string | null; model: string | null; archived: boolean }[] }
       get_delayed_vehicles: { Args: { threshold_days?: number }; Returns: { current_station: string; entered_at: string; job_order_id: string; lot_code: string; lot_model: string; vehicle_id: string; vin: string; vin_suffix: string; working_days_at_station: number; working_hours_at_station: number }[] }
       get_wip_working_hours: { Args: { station_codes: string[] }; Returns: { vehicle_id: string; entered_at: string; working_hours: number; working_days: number }[] }
       get_home_stats: { Args: never; Returns: Json }
       has_role: { Args: { _role: Database["public"]["Enums"]["app_role"]; _user_id: string }; Returns: boolean }
       has_station_access: { Args: { _station: Database["public"]["Enums"]["station_code"]; _user_id: string }; Returns: boolean }
+      mark_stale_offline: { Args: never; Returns: undefined }
+      set_user_offline: { Args: { p_user_id: string }; Returns: undefined }
+      touch_presence_heartbeat: { Args: { p_user_id: string }; Returns: undefined }
     }
     Enums: {
       access_request_status: "pending" | "approved" | "denied"

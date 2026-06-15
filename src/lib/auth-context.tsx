@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import type { StationCode } from "@/lib/stations";
+import { usePresence } from "@/hooks/use-presence";
 
 export type AppRole = "superuser" | "technician" | "staff" | "status";
 
@@ -32,6 +33,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [stations, setStations] = useState<StationCode[]>([]);
   const [dashboardAllowed, setDashboardAllowed] = useState(true);
   const [ready, setReady] = useState(false);
+
+  // Presence heartbeat — tracks online status and active time
+  usePresence(user?.id);
 
   const loadProfile = async (uid: string) => {
     const [{ data: prof }, { data: rs }, { data: st }] = await Promise.all([

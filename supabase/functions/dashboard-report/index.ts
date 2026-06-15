@@ -116,20 +116,22 @@ function drawPieChart(doc: any, cx: number, cy: number, r: number, data: { label
   data.forEach((d) => {
     const sliceAngle = (d.value / total) * 2 * Math.PI;
     doc.setFillColor(d.color[0], d.color[1], d.color[2]);
-    doc.triangle(cx, cy, cx + r * Math.cos(angle), cy + r * Math.sin(angle), cx + r * Math.cos(angle + sliceAngle), cy + r * Math.sin(angle + sliceAngle), "F");
-    // Fill arc segments for smooth pie
-    const steps = Math.max(Math.ceil(sliceAngle / 0.05), 2);
-    for (let i = 0; i < steps; i++) {
-      const a1 = angle + (i / steps) * sliceAngle;
-      const a2 = angle + ((i + 1) / steps) * sliceAngle;
-      doc.triangle(cx, cy, cx + r * Math.cos(a1), cy + r * Math.sin(a1), cx + r * Math.cos(a2), cy + r * Math.sin(a2), "F");
+    // Draw pie slice as filled polygon
+    const steps = Math.max(Math.ceil(sliceAngle / 0.05), 4);
+    const points: number[][] = [[cx, cy]];
+    for (let i = 0; i <= steps; i++) {
+      const a = angle + (i / steps) * sliceAngle;
+      points.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
     }
+    // Draw filled polygon using path
+    doc.setDrawColor(d.color[0], d.color[1], d.color[2]);
+    doc.lines(points.map(([x, y]) => [x - points[0][0], y - points[0][1]]), cx, cy, undefined, true, "F");
     angle += sliceAngle;
   });
 
   // White center for donut
   doc.setFillColor(255, 255, 255);
-  doc.circle(cx, cy, r * 0.5, "F");
+  doc.ellipse(cx, cy, r * 0.5, r * 0.5, "F");
 
   // Center text
   doc.setFontSize(10);
@@ -160,33 +162,45 @@ function drawPieLegend(doc: any, x: number, y: number, data: { label: string; va
   });
 }
 
+function drawArcSlice(doc: any, cx: number, cy: number, r: number, a1: number, a2: number, color: number[]) {
+  doc.setFillColor(color[0], color[1], color[2]);
+  doc.setDrawColor(color[0], color[1], color[2]);
+  const steps = Math.max(Math.ceil(Math.abs(a2 - a1) / 0.05), 3);
+  const points: number[][] = [[cx, cy]];
+  for (let i = 0; i <= steps; i++) {
+    const a = a1 + (i / steps) * (a2 - a1);
+    points.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  doc.lines(points.map(([x, y]) => [x - points[0][0], y - points[0][1]]), cx, cy, undefined, true, "F");
+}
+
 function drawGauge(doc: any, cx: number, cy: number, r: number, pct: number, label: string, valueText: string, color: number[]) {
   const startAngle = Math.PI * 0.75;
   const endAngle = Math.PI * 2.25;
   const totalAngle = endAngle - startAngle;
   const fillAngle = startAngle + totalAngle * Math.min(pct, 1);
 
-  // Background arc
-  const bgSteps = 40;
-  doc.setFillColor(226, 232, 240);
+  // Background arc segments
+  const bgSteps = 12;
   for (let i = 0; i < bgSteps; i++) {
     const a1 = startAngle + (i / bgSteps) * totalAngle;
     const a2 = startAngle + ((i + 1) / bgSteps) * totalAngle;
-    doc.triangle(cx, cy, cx + r * Math.cos(a1), cy + r * Math.sin(a1), cx + r * Math.cos(a2), cy + r * Math.sin(a2), "F");
+    drawArcSlice(doc, cx, cy, r, a1, a2, [226, 232, 240]);
   }
 
-  // Filled arc
-  const fillSteps = Math.max(Math.ceil(((fillAngle - startAngle) / totalAngle) * bgSteps), 2);
-  doc.setFillColor(color[0], color[1], color[2]);
-  for (let i = 0; i < fillSteps; i++) {
-    const a1 = startAngle + (i / fillSteps) * (fillAngle - startAngle);
-    const a2 = startAngle + ((i + 1) / fillSteps) * (fillAngle - startAngle);
-    doc.triangle(cx, cy, cx + r * Math.cos(a1), cy + r * Math.sin(a1), cx + r * Math.cos(a2), cy + r * Math.sin(a2), "F");
+  // Filled arc segments
+  if (pct > 0) {
+    const fillSteps = Math.max(Math.ceil(pct * bgSteps), 2);
+    for (let i = 0; i < fillSteps; i++) {
+      const a1 = startAngle + (i / fillSteps) * (fillAngle - startAngle);
+      const a2 = startAngle + ((i + 1) / fillSteps) * (fillAngle - startAngle);
+      drawArcSlice(doc, cx, cy, r, a1, a2, color);
+    }
   }
 
   // White center
   doc.setFillColor(255, 255, 255);
-  doc.circle(cx, cy, r * 0.6, "F");
+  doc.ellipse(cx, cy, r * 0.6, r * 0.6, "F");
 
   // Center value
   doc.setFontSize(8);
@@ -213,21 +227,32 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { date, module: mod }: { date?: string; module?: string } = await req.json().catch(() => ({}));
+    const { date, module: mod, period }: { date?: string; module?: string; period?: "day" | "month" } = await req.json().catch(() => ({}));
     const reportDate = date ?? new Date().toISOString().slice(0, 10);
     const m = mod ?? "pbs";
     const config = MODULE_CONFIG[m] ?? MODULE_CONFIG.pbs;
+    const isMonthly = period === "month";
 
     const env = Deno.env.toObject() as Env;
     const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
 
     const dayStart = `${reportDate}T00:00:00`;
     const dayEnd = `${reportDate}T23:59:59`;
+    // Monthly range: first day of month to last day of month
+    const [ry, rm] = reportDate.split("-").map(Number);
+    const lastDay = new Date(ry, rm, 0).getDate();
+    const monthStart = `${ry}-${String(rm).padStart(2, "0")}-01T00:00:00`;
+    const monthEnd = `${ry}-${String(rm).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}T23:59:59`;
+    const rangeStart = isMonthly ? monthStart : dayStart;
+    const rangeEnd = isMonthly ? monthEnd : dayEnd;
+    const rangeLabel = isMonthly
+      ? `${reportDate.slice(0, 7)} (Monthly)`
+      : reportDate;
 
     // 1. Fetch WIP vehicles at relevant stations
     const { data: wipData } = await sb
       .from("vehicles")
-      .select("id, vin, vin_suffix, current_station, actual_color_id, lot_id, job_order_id")
+      .select("id, vin, vin_suffix, current_station, actual_color_id, lot_id, job_order_id, contract_model")
       .in("current_station", config.stations)
       .is("completed_at", null);
     const wipVehicles: WipVehicle[] = (wipData ?? []).map((v: any) => ({ ...v, lot_model: "", entry_time: null }));
@@ -256,6 +281,7 @@ Deno.serve(async (req: Request) => {
     wipVehicles.forEach((v: any) => {
       if (v.lot_id && lotMap[v.lot_id]) v.lot_model = lotMap[v.lot_id];
       else if (v.job_order_id && joModelMap[v.job_order_id]) v.lot_model = joModelMap[v.job_order_id];
+      else if (v.contract_model) v.lot_model = v.contract_model;
     });
 
     // 5. Entry times
@@ -287,14 +313,23 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // 7. Today's events for KPI
-    const { data: todayEvents } = await sb
-      .from("station_events")
-      .select("station, kind")
-      .gte("recorded_at", dayStart)
-      .lte("recorded_at", dayEnd);
-    const carsIn = (todayEvents ?? []).filter((e: any) => e.kind === "in" && config.stations.includes(e.station)).length;
-    const carsOut = (todayEvents ?? []).filter((e: any) => e.kind === "out" && config.stations.includes(e.station)).length;
+    // 7. Events for KPI (day or month range) — uses unified RPC so archived
+    // vehicles (hard-deleted from vehicles/station_events) are still counted.
+    const { data: rpcEvents } = await sb.rpc("get_production_events", { p_from: rangeStart, p_to: rangeEnd });
+    const todayEvents = (rpcEvents ?? []) as any[];
+    const carsIn = todayEvents.filter((e: any) => e.kind === "in" && config.stations.includes(e.station)).length;
+    const carsOut = todayEvents.filter((e: any) => e.kind === "out" && config.stations.includes(e.station)).length;
+
+    // For monthly: build daily breakdown
+    const dailyBreakdown: Record<string, { in: number; out: number }> = {};
+    if (isMonthly) {
+      todayEvents.forEach((e: any) => {
+        const day = (typeof e.recorded_at === "string" ? e.recorded_at : new Date(e.recorded_at).toISOString()).slice(0, 10);
+        if (!dailyBreakdown[day]) dailyBreakdown[day] = { in: 0, out: 0 };
+        if (e.kind === "in") dailyBreakdown[day].in++;
+        else dailyBreakdown[day].out++;
+      });
+    }
 
     // 8. Delayed WIP
     const now = new Date();
@@ -414,7 +449,7 @@ Deno.serve(async (req: Request) => {
     const now2 = new Date();
     const ts = now2.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }) +
       " " + now2.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
-    doc.text(`Report Generated: ${ts} | Data: Live`, pageWidth / 2, y, { align: "center" });
+    doc.text(`Report Generated: ${ts} | Period: ${rangeLabel}`, pageWidth / 2, y, { align: "center" });
     y += 8;
 
     // === KPI CARDS ===
@@ -509,6 +544,48 @@ Deno.serve(async (req: Request) => {
       : 0;
     drawGauge(doc, 14 + gaugeSpacing * 2.5, gaugeY, 14, okPct, "OK Rate", `${(okPct * 100).toFixed(0)}%`, gaugeColor(1 - okPct));
     y = gaugeY + 22;
+
+    // === DAILY BREAKDOWN (monthly reports only) ===
+    if (isMonthly) {
+      const days = Object.keys(dailyBreakdown).sort();
+      if (days.length > 0) {
+        needSpace(30);
+        doc.addPage();
+        y = 15;
+        doc.setFontSize(13);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 58, 138);
+        doc.text(`Daily In/Out Breakdown — ${rangeLabel}`, 14, y);
+        y += 5;
+        const dailyHeaders = ["Date", "Cars In", "Cars Out", "Net"];
+        const dailyRows = days.map(d => [
+          d,
+          String(dailyBreakdown[d].in),
+          String(dailyBreakdown[d].out),
+          String(dailyBreakdown[d].in - dailyBreakdown[d].out),
+        ]);
+        // Totals row
+        const totalIn = days.reduce((s, d) => s + dailyBreakdown[d].in, 0);
+        const totalOut = days.reduce((s, d) => s + dailyBreakdown[d].out, 0);
+        dailyRows.push(["TOTAL", String(totalIn), String(totalOut), String(totalIn - totalOut)]);
+        (autotable as any)(doc, {
+          startY: y,
+          head: [dailyHeaders],
+          body: dailyRows,
+          theme: "grid",
+          styles: { fontSize: 8, cellPadding: 2 },
+          headStyles: { fillColor: config.color, textColor: 255 },
+          columnStyles: { 0: { cellWidth: 35 }, 1: { cellWidth: 25 }, 2: { cellWidth: 25 }, 3: { cellWidth: 25 } },
+          // Bold the totals row
+          didParseCell: (data: any) => {
+            if (data.section === "body" && data.row.index === dailyRows.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+            }
+          },
+        });
+        y = (doc as any).lastAutoTable.finalY + 8;
+      }
+    }
 
     // === MODEL DISTRIBUTION CHART ===
     const modelCounts: Record<string, number> = {};

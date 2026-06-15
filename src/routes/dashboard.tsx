@@ -23,7 +23,7 @@ export const Route = createFileRoute("/dashboard")({
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
 });
 
-type EventRow = { station: string; kind: string; recorded_at: string; vehicle_id: string };
+type EventRow = { station: string; kind: string; recorded_at: string; vehicle_id: string; model?: string | null; vin?: string | null; archived?: boolean };
 type ShortageRow = {
   id: string; vehicle_id: string; parts: string[]; shortage_reason: string | null; part_type: string | null;
   status: string; created_at: string; vehicle: { vin: string; vin_suffix: string } | null;
@@ -73,6 +73,7 @@ function Page() {
   const [allOpenShortages, setAllOpenShortages] = useState<ShortageRow[]>([]);
   const [shortagesClearedToday, setShortagesClearedToday] = useState<ShortageRow[]>([]);
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
+  const [allVehicles, setAllVehicles] = useState<VehicleRow[]>([]);
   const [lots, setLots] = useState<LotRow[]>([]);
   const [issues, setIssues] = useState<IssueRow[]>([]);
   const [workingHoursMap, setWorkingHoursMap] = useState<Map<string, { entered_at: string; working_hours: number; working_days: number }>>(new Map());
@@ -80,12 +81,15 @@ function Page() {
   const [monthlyShortages, setMonthlyShortages] = useState<ShortageRow[]>([]);
 
   const monthStart = selectedDate.slice(0, 8) + "01";
+  const isToday = selectedDate === (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })();
+  // Monthly range: full month of the selected date
+  const monthEndDate = (() => { const [y, m] = selectedDate.split("-").map(Number); const last = new Date(y, m, 0); return `${y}-${String(m).padStart(2,"0")}-${String(last.getDate()).padStart(2,"0")}T23:59:59`; })();
   const lotMap = useMemo(() => Object.fromEntries(lots.map(l => [l.id, l.model])), [lots]);
   const vModel = useMemo(() => {
     const m = new Map<string, string>();
-    vehicles.forEach(v => { m.set(v.id, v.contract_model || (v.lot_id && lotMap[v.lot_id]) || "Unknown"); });
+    allVehicles.forEach(v => { m.set(v.id, v.contract_model || (v.lot_id && lotMap[v.lot_id]) || "Unknown"); });
     return m;
-  }, [vehicles, lotMap]);
+  }, [allVehicles, lotMap]);
 
   // Search filter: matching vehicle IDs
   const searchVidSet = useMemo(() => {
@@ -104,37 +108,48 @@ function Page() {
     setLoading(true);
     const dayStart = `${selectedDate}T00:00:00`;
     const dayEnd = `${selectedDate}T23:59:59`;
-    const monthEnd = dayEnd;
 
-    const [evRes, shRes, vRes, lRes, iRes, mEvRes, mShRes, osRes, clRes] = await Promise.all([
+    const [evRes, shRes, vRes, lRes, iRes, mEvRes, mShRes, osRes, clRes, avRes] = await Promise.all([
       supabase.from("station_events").select("station, kind, recorded_at, vehicle_id").gte("recorded_at", dayStart).lte("recorded_at", dayEnd),
       supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, vehicle:vehicles(vin, vin_suffix)").gte("created_at", dayStart).lte("created_at", dayEnd),
-      supabase.from("vehicles").select("id, current_station, lot_id, vin, vin_suffix, updated_at, contract_model").is("completed_at", null),
+      // WIP: only load live vehicles when viewing today; for past dates WIP section is historical (N/A)
+      isToday
+        ? supabase.from("vehicles").select("id, current_station, lot_id, vin, vin_suffix, updated_at, contract_model").is("completed_at", null)
+        : Promise.resolve({ data: [], error: null }),
       supabase.from("lots").select("id, model"),
       supabase.from("issues").select("id, vehicle_id, status, title").in("status", ["open", "in_progress"]),
-      supabase.from("station_events").select("station, kind, recorded_at, vehicle_id").gte("recorded_at", `${monthStart}T00:00:00`).lte("recorded_at", monthEnd),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, vehicle:vehicles(vin, vin_suffix)").gte("created_at", `${monthStart}T00:00:00`).lte("created_at", monthEnd),
+      // Monthly events: full month range via unified RPC (includes archived vehicles)
+      supabase.rpc("get_production_events", { p_from: `${monthStart}T00:00:00`, p_to: monthEndDate }),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, vehicle:vehicles(vin, vin_suffix)").gte("created_at", `${monthStart}T00:00:00`).lte("created_at", monthEndDate),
       supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at").eq("status", "open"),
       supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, vin_suffix)").eq("status", "cleared").gte("cleared_at", dayStart).lte("cleared_at", dayEnd),
+      // ALL vehicles (incl. completed) for model resolution — monthly events
+      // reference completed vehicles whose data would otherwise show as "—".
+      supabase.from("vehicles").select("id, current_station, lot_id, vin, vin_suffix, updated_at, contract_model"),
     ]);
 
     setEvents((evRes.data ?? []) as EventRow[]);
     setShortages((shRes.data ?? []) as unknown as ShortageRow[]);
     setVehicles((vRes.data ?? []) as VehicleRow[]);
+    setAllVehicles((avRes.data ?? []) as VehicleRow[]);
     setLots((lRes.data ?? []) as LotRow[]);
     setIssues((iRes.data ?? []) as IssueRow[]);
     setAllOpenShortages((osRes.data ?? []) as unknown as ShortageRow[]);
     setShortagesClearedToday((clRes.data ?? []) as unknown as ShortageRow[]);
 
-    // Fetch working hours from calendar via RPC
-    const allStations = ["body_shop", "wbs", "paint", "pbs", "shortage", "repair", "cs", "pdi", "tcf", "tcf_offline"];
-    const { data: whData } = await supabase.rpc("get_wip_working_hours", { station_codes: allStations });
-    const whMap = new Map<string, { entered_at: string; working_hours: number; working_days: number }>();
-    (whData as any[] ?? []).forEach((r: any) => {
-      whMap.set(r.vehicle_id, { entered_at: r.entered_at, working_hours: Number(r.working_hours ?? 0) || 0, working_days: Number(r.working_days ?? 0) || 0 });
-    });
-    setWorkingHoursMap(whMap);
-    setMonthlyEvents((mEvRes.data ?? []) as EventRow[]);
+    // Fetch working hours from calendar via RPC (only for today's live data)
+    if (isToday) {
+      const allStations = ["body_shop", "wbs", "paint", "pbs", "shortage", "repair", "cs", "pdi", "tcf", "tcf_offline"];
+      const { data: whData } = await supabase.rpc("get_wip_working_hours", { station_codes: allStations });
+      const whMap = new Map<string, { entered_at: string; working_hours: number; working_days: number }>();
+      (whData as any[] ?? []).forEach((r: any) => {
+        whMap.set(r.vehicle_id, { entered_at: r.entered_at, working_hours: Number(r.working_hours ?? 0) || 0, working_days: Number(r.working_days ?? 0) || 0 });
+      });
+      setWorkingHoursMap(whMap);
+    } else {
+      setWorkingHoursMap(new Map());
+    }
+    setMonthlyEvents(((mEvRes.data ?? []) as unknown) as EventRow[]);
     setMonthlyShortages((mShRes.data ?? []) as unknown as ShortageRow[]);
 
     setLoading(false);
@@ -353,6 +368,16 @@ function Page() {
     return Array.from(models.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [dayEvents, wipVehicles, vModel]);
 
+  // Per-station model distribution (for chart in station tabs)
+  const stationModelChart = useMemo(() => {
+    const counts: Record<string, number> = {};
+    wipVehicles.forEach(v => {
+      const model = vModel.get(v.id) ?? "Unknown";
+      counts[model] = (counts[model] ?? 0) + 1;
+    });
+    return Object.entries(counts).map(([model, count]) => ({ model, count })).sort((a, b) => b.count - a.count).slice(0, 8);
+  }, [wipVehicles, vModel]);
+
   const vehicleTracing = useMemo(() => {
     let rows = dayEvents.map(e => ({
       vin: "—",
@@ -364,19 +389,19 @@ function Page() {
       shortage: vehicleShortageCategory.get(e.vehicle_id) ?? "",
     }));
     const vinMap = new Map<string, string>();
-    vehicles.forEach(v => vinMap.set(v.id, v.vin));
+    allVehicles.forEach(v => vinMap.set(v.id, v.vin));
     rows.forEach(r => { r.vin = vinMap.get(r.vehicle_id) ?? "—"; });
     if (vinSearch.trim()) {
       const q = vinSearch.toLowerCase();
       rows = rows.filter(r => r.vin.toLowerCase().includes(q) || r.model.toLowerCase().includes(q));
     }
     return rows.sort((a, b) => new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime());
-  }, [dayEvents, vModel, vehicles, vinSearch, vehicleIssues, vehicleShortageCategory]);
+  }, [dayEvents, vModel, allVehicles, vinSearch, vehicleIssues, vehicleShortageCategory]);
 
   // Build vehicle detail rows for cell dialog
   const buildCellRows = useCallback((category: string, direction: "in" | "out" | "wip", period: "today" | "month" = "today"): { vin: string; model: string; station: string | null; issue: string }[] => {
     const vinMap = new Map<string, string>();
-    vehicles.forEach(v => vinMap.set(v.id, v.vin));
+    allVehicles.forEach(v => vinMap.set(v.id, v.vin));
 
     if (direction === "wip") {
       return wipVehicles
@@ -435,18 +460,19 @@ function Page() {
     const sourceEvents = direction === "in" ? evts.filter(e => e.kind === "in") : evts.filter(e => e.kind === "out");
     return sourceEvents
       .filter(e => {
+        if (e.archived) return category === "No Issue" || category === "OK"; // archived rows carry no live issue/category
         if (activeDept === "pbs") return classifyPbs(e.vehicle_id) === category;
         return classifyWbs(e.vehicle_id) === category;
       })
       .map(e => ({
-        vin: vinMap.get(e.vehicle_id) ?? "—",
-        model: vModel.get(e.vehicle_id) || "—",
+        vin: e.vin || vinMap.get(e.vehicle_id) || "—",
+        model: e.model || vModel.get(e.vehicle_id) || "—",
         station: null,
         issue: (vehicleIssues.get(e.vehicle_id) ?? []).join("; "),
       }));
-  }, [wipVehicles, dayEvents, monthDayEvents, activeDept, vehicleIssues, vehicleShortageCategory, vModel, vehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday, monthlyShortages]);
+  }, [wipVehicles, dayEvents, monthDayEvents, activeDept, vehicleIssues, vehicleShortageCategory, vModel, allVehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday, monthlyShortages]);
 
-  const downloadReport = async () => {
+  const downloadReport = async (period: "day" | "month" = "day") => {
     setReportBusy(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -460,7 +486,7 @@ function Page() {
           "Authorization": `Bearer ${session?.access_token ?? ""}`,
           "apikey": supabaseKey,
         },
-        body: JSON.stringify({ date: selectedDate, module: activeDept === "shortages" ? "shortage" : activeDept }),
+        body: JSON.stringify({ date: selectedDate, module: activeDept === "shortages" ? "shortage" : activeDept, period }),
       });
       if (!res.ok) {
         let errMsg = `Server error ${res.status}`;
@@ -472,7 +498,7 @@ function Page() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${activeDept}-report-${selectedDate}.pdf`;
+      a.download = `${activeDept}-${period === "month" ? "monthly" : "daily"}-report-${selectedDate}.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -520,6 +546,7 @@ function Page() {
             {live && <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-white" /></span>}
             {live ? "Go Live" : "Live Off"}
           </Button>
+          {!isToday && <Badge variant="outline" className="text-amber-600 border-amber-500/50 text-xs">Historical view — In/Out data for {selectedDate}, no live WIP</Badge>}
           <div className="flex-1 min-w-[180px] max-w-md">
             <div className="relative">
               <Input placeholder="Global VIN / Model Search..." value={vinSearch} onChange={e => setVinSearch(e.target.value)} className="pl-9" />
@@ -528,8 +555,11 @@ function Page() {
           </div>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <Button size="sm" onClick={downloadReport} disabled={reportBusy} className="gap-2 bg-teal-600 hover:bg-teal-700">
-            {reportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Download Report
+          <Button size="sm" onClick={() => downloadReport("day")} disabled={reportBusy} className="gap-2 bg-teal-600 hover:bg-teal-700">
+            {reportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Daily Report
+          </Button>
+          <Button size="sm" onClick={() => downloadReport("month")} disabled={reportBusy} className="gap-2 bg-indigo-600 hover:bg-indigo-700">
+            {reportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Monthly Report
           </Button>
         </div>
       </div>
@@ -548,10 +578,11 @@ function Page() {
               <div className="flex items-center justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
             ) : d === "overview" ? (
               <OverviewSection
-                events={events} vehicles={vehicles} issues={issues} shortages={shortages} allOpenShortages={allOpenShortages}
+                events={events} vehicles={vehicles} allVehicles={allVehicles} issues={issues} shortages={shortages} allOpenShortages={allOpenShortages}
                 lots={lots} vModel={vModel} selectedDate={selectedDate}
                 classifyPbs={classifyPbs} classifyWbs={classifyWbs}
                 monthStart={monthStart} vehicleIssues={vehicleIssues} vehicleShortageCategory={vehicleShortageCategory}
+                workingHoursMap={workingHoursMap}
               />
             ) : d === "delayed" ? (
               <DelayedSection delayThreshold={delayThreshold} setDelayThreshold={setDelayThreshold} delayedWip={delayedWip} />
@@ -627,9 +658,44 @@ function Page() {
                 </div>
 
                 {/* Charts */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* In/Out by Category */}
+                  <div className="bg-card rounded-lg border p-4">
+                    <h3 className="font-bold text-center mb-4">In vs Out by Category (Today)</h3>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart data={cats.map(c => ({ category: c, "Cars In": dayMap.In[c] ?? 0, "Cars Out": dayMap.Out[c] ?? 0 }))} barGap={4}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis dataKey="category" tick={{ fontSize: 10 }} />
+                        <YAxis tick={{ fontSize: 11 }} />
+                        <Tooltip />
+                        <Legend />
+                        <Bar dataKey="Cars In" fill="#2980b9" radius={[4,4,0,0]} />
+                        <Bar dataKey="Cars Out" fill="#27ae60" radius={[4,4,0,0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* WIP Donut */}
+                  {chartData.length > 0 && (
+                    <div className="bg-card rounded-lg border p-4">
+                      <h3 className="font-bold text-center mb-4">WIP Category Distribution</h3>
+                      <ResponsiveContainer width="100%" height={220}>
+                        <PieChart>
+                          <Pie data={chartData} dataKey="value" nameKey="label" cx="50%" cy="50%" outerRadius={80} innerRadius={45} paddingAngle={2} label={({ name, value }) => `${name}: ${value}`}>
+                            {chartData.map((_, i) => <RechartsCell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                          </Pie>
+                          <Tooltip />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
+
+                {/* Horizontal bar fallback */}
                 {chartData.length > 0 && (
                   <div className="bg-card rounded-lg border p-4">
-                    <h3 className="font-bold text-lg text-center mb-4">Category Distribution</h3>
+                    <h3 className="font-bold text-lg text-center mb-4">Category Summary</h3>
                     <div className="space-y-2 max-w-lg mx-auto">
                       {chartData.map((d, i) => {
                         const colors = [
@@ -717,6 +783,24 @@ function Page() {
                         </tbody>
                       </table>
                     </div>
+                  </div>
+                )}
+
+                {/* Station Model Chart */}
+                {stationModelChart.length > 0 && (
+                  <div className="bg-card rounded-lg border p-4">
+                    <h3 className="font-bold text-center mb-4">WIP by Model at {DEPT_LABEL[d]}</h3>
+                    <ResponsiveContainer width="100%" height={Math.min(stationModelChart.length * 35 + 40, 300)}>
+                      <BarChart data={stationModelChart} layout="vertical">
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis type="number" tick={{ fontSize: 11 }} />
+                        <YAxis type="category" dataKey="model" tick={{ fontSize: 10 }} width={90} />
+                        <Tooltip />
+                        <Bar dataKey="count" radius={[0,4,4,0]}>
+                          {stationModelChart.map((_, i) => <RechartsCell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
                 )}
 
@@ -813,13 +897,14 @@ function Page() {
 const CHART_COLORS = ["#d35400", "#27ae60", "#2980b9", "#f39c12", "#8e44ad", "#e74c3c", "#16a085", "#f97316"];
 
 type OverviewProps = {
-  events: EventRow[]; vehicles: VehicleRow[]; issues: IssueRow[]; shortages: ShortageRow[];
+  events: EventRow[]; vehicles: VehicleRow[]; allVehicles: VehicleRow[]; issues: IssueRow[]; shortages: ShortageRow[];
   allOpenShortages: ShortageRow[]; lots: LotRow[]; vModel: Map<string, string>; selectedDate: string;
   classifyPbs: (vId: string) => string; classifyWbs: (vId: string) => string;
   monthStart: string; vehicleIssues: Map<string, string[]>; vehicleShortageCategory: Map<string, string>;
+  workingHoursMap: Map<string, { entered_at: string; working_hours: number; working_days: number }>;
 };
 
-function OverviewSection({ events, vehicles, issues, shortages, allOpenShortages, lots, vModel, selectedDate, classifyPbs, classifyWbs, monthStart, vehicleIssues, vehicleShortageCategory }: OverviewProps) {
+function OverviewSection({ events, vehicles, allVehicles, issues, shortages, allOpenShortages, lots, vModel, selectedDate, classifyPbs, classifyWbs, monthStart, vehicleIssues, vehicleShortageCategory, workingHoursMap }: OverviewProps) {
   const [overviewDialog, setOverviewDialog] = useState<{ title: string; rows: { vin: string; model: string; station: string | null; issue: string }[] } | null>(null);
   const toLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   const today = toLocal(new Date());
@@ -852,6 +937,18 @@ function OverviewSection({ events, vehicles, issues, shortages, allOpenShortages
   const openShortages = allOpenShortages.length;
   const openIssues = issues.length;
 
+  // Average working hours across all dashboard-station vehicles
+  const avgWorkingHours = useMemo(() => {
+    const dashboardStations = new Set(["shortage", "pbs", "wbs", "tcf", "repair", "cs", "pdi", "waiting_repair", "tcf_offline"]);
+    const scopedVehicles = vehicles.filter(v => dashboardStations.has(v.current_station ?? ""));
+    if (scopedVehicles.length === 0) return "—";
+    const total = scopedVehicles.reduce((sum, v) => {
+      const wh = workingHoursMap.get(v.id);
+      return sum + (wh?.working_hours ?? 0);
+    }, 0);
+    return (total / scopedVehicles.length).toFixed(1);
+  }, [vehicles, workingHoursMap]);
+
   // In/Out comparison chart
   const ioChartData = stationData.map(d => ({ station: d.label, "Cars In": d.carsIn, "Cars Out": d.carsOut }));
 
@@ -881,10 +978,12 @@ function OverviewSection({ events, vehicles, issues, shortages, allOpenShortages
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
   }, [allOpenShortages]);
 
-  // Model distribution
+  // Model distribution — scoped to dashboard stations only
   const modelData = useMemo(() => {
+    const dashboardStations = new Set(["shortage", "pbs", "wbs", "tcf", "repair", "cs", "pdi", "waiting_repair", "tcf_offline"]);
     const counts: Record<string, number> = {};
     vehicles.forEach(v => {
+      if (!dashboardStations.has(v.current_station ?? "")) return;
       const model = vModel.get(v.id) ?? "Unknown";
       counts[model] = (counts[model] ?? 0) + 1;
     });
@@ -922,7 +1021,7 @@ function OverviewSection({ events, vehicles, issues, shortages, allOpenShortages
         <StatBox label="Total Cars In" value={totalIn} color="blue" />
         <StatBox label="Total Cars Out" value={totalOut} color="green" />
         <StatBox label="Total WIP" value={totalWip} color="amber" />
-        <StatBox label="Avg Time (h)" value="—" color="purple" />
+        <StatBox label="Avg Time (h)" value={avgWorkingHours} color="purple" />
         <StatBox label="OK" value={totalOk} color="green" />
         <StatBox label="Not OK" value={totalNotOk} color="red" />
         <StatBox label="Open Shortages" value={openShortages} color="amber" />
@@ -939,7 +1038,7 @@ function OverviewSection({ events, vehicles, issues, shortages, allOpenShortages
           };
           const buildRows = (cat: string, dir: "in" | "out" | "wip") => {
             const vinMap = new Map<string, string>();
-            vehicles.forEach(v => vinMap.set(v.id, v.vin));
+            allVehicles.forEach(v => vinMap.set(v.id, v.vin));
             if (dir === "wip") {
               return vehicles.filter(v => v.current_station === sr.station && classify(v.id) === cat)
                 .map(v => ({ vin: v.vin, model: vModel.get(v.id) || "—", station: v.current_station, issue: (vehicleIssues.get(v.id) ?? []).join("; ") }));

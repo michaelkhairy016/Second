@@ -29,7 +29,7 @@ export async function archiveContractVehicle(
     vin: vehicle.vin,
     vin_suffix: vehicle.vin_suffix,
     lot_code: (vehicle.lots as any)?.lot_code ?? null,
-    lot_model: (vehicle.lots as any)?.model ?? null,
+    lot_model: (vehicle.lots as any)?.model ?? (vehicle as any).contract_model ?? null,
     vehicle_data: vehicle as any,
     events_data: events ?? [],
     issues_data: issues ?? [],

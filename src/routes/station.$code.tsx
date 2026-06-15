@@ -17,7 +17,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { findBySuffix, stripVinStars } from "@/lib/vin";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, ClipboardCheck, FileSpreadsheet, Plus, X, Package, ClipboardPenLine, PaintBucket } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, ClipboardCheck, FileSpreadsheet, Plus, X, Package, ClipboardPenLine, PaintBucket, Edit2 } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -438,7 +438,7 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
       const user = (await supabase.auth.getUser()).data.user;
 
       // Post-paint color assignment: save color if selected and vehicle has none
-      if (color && !picked.actual_color_id && (postPaintStations.includes(station) || (isLaunchMode && station === "shortage"))) {
+      if (color && !picked.actual_color_id && (postPaintStations.includes(station) || station === "shortage")) {
         await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked.id);
       }
 
@@ -488,7 +488,7 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
   const { isStaff: isStaffLocal, isSuperuser: isSuperLocal } = useAuth();
   const { isLaunchMode } = useProductionMode();
   const needsColor = station === "paint" && !picked?.actual_color_id;
-  const canAssignColor = (postPaintStations.includes(station) || (isLaunchMode && station === "shortage")) && picked && !picked.actual_color_id && station !== "paint";
+  const canAssignColor = (postPaintStations.includes(station) || station === "shortage") && picked && !picked.actual_color_id && station !== "paint";
   const canReassignColor = postPaintStations.includes(station) && picked?.actual_color_id && (isStaffLocal || isSuperLocal) && station !== "paint";
 
   // Simplified paint for Launch Mode: just record color
@@ -1204,6 +1204,7 @@ interface ShortageRecord {
   responsibility: string | null;
   received_by: string | null;
   released_by: string | null;
+  shortage_reason: string | null;
   status: string;
   notes: string | null;
   created_at: string;
@@ -1215,7 +1216,7 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
   const debouncedSuffix = useDebouncedValue(suffix, 300);
   const [matches, setMatches] = useState<Awaited<ReturnType<typeof findBySuffix>>>([]);
   const [picked, setPicked] = useState<typeof matches[number] | null>(null);
-  const [mode, setMode] = useState<"in" | "out">("in");
+  const [mode, setMode] = useState<"in" | "out" | "update">("in");
   const [parts, setParts] = useState("");
   const [notes, setNotes] = useState("");
   const [partType, setPartType] = useState<"ckd" | "local" | "plastics">("ckd");
@@ -1233,7 +1234,7 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
       setSuffix(autoPicked.vin_suffix);
       setMatches([]);
       // Auto-detect mode based on current station
-      if (autoPicked.current_station === "shortage") setMode("out");
+      if (autoPicked.current_station === "shortage") setMode("update");
       else setMode("in");
       onAutoPickedConsumed?.();
     }
@@ -1255,10 +1256,25 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
     let cancel = false;
     const load = async () => {
       const { data } = await supabase.from("shortages")
-        .select("id, parts, part_type, responsibility, received_by, released_by, status, notes, created_at, cleared_at")
+        .select("id, parts, part_type, responsibility, received_by, released_by, shortage_reason, status, notes, created_at, cleared_at")
         .eq("vehicle_id", picked.id)
         .order("created_at", { ascending: false });
-      if (!cancel) setShortages((data ?? []) as unknown as ShortageRecord[]);
+      if (!cancel) {
+        const recs = (data ?? []) as unknown as ShortageRecord[];
+        setShortages(recs);
+        // Pre-fill fields when in update mode
+        if (mode === "update") {
+          const openSh = recs.find(s => s.status === "open");
+          if (openSh) {
+            setParts((openSh.parts as string[]).join(", "));
+            setNotes(openSh.notes || "");
+            setPartType((openSh.part_type as any) || "ckd");
+            setResponsibility((openSh.responsibility as any) || "supplier");
+            setShortageReason((openSh.shortage_reason as any) || "ckd");
+            setReceivedBy(openSh.received_by || "");
+          }
+        }
+      }
     };
     load();
     const ch = supabase.channel(`shortages-${picked.id}`)
@@ -1314,6 +1330,28 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
 
+  const updateShortage = async () => {
+    if (!picked) return toast.error("Pick a VIN first");
+    const openSh = shortages.find(s => s.status === "open");
+    if (!openSh) return toast.error("No open shortage to update");
+    const partList = parts.split(",").map(s => s.trim()).filter(Boolean);
+    if (partList.length === 0) return toast.error("List at least one part");
+    setBusy(true);
+    try {
+      const { error } = await supabase.from("shortages").update({
+        parts: partList,
+        notes: notes || openSh.notes,
+        part_type: partType,
+        responsibility,
+        shortage_reason: shortageReason,
+        received_by: receivedBy || openSh.received_by,
+      }).eq("id", openSh.id);
+      if (error) throw error;
+      toast.success("Shortage updated");
+      resetScan();
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
+  };
+
   const openShortages = shortages.filter(s => s.status === "open");
 
   return (
@@ -1331,8 +1369,20 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
           {picked && (<div className="rounded-md border bg-muted/40 p-3 text-sm space-y-1"><div className="font-mono text-base">{picked.vin}</div><div className="text-xs text-muted-foreground">At <b>{picked.current_station ?? "—"}</b></div></div>)}
           {picked && (
             <div className="flex gap-2">
-              <button type="button" onClick={() => setMode("in")} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${mode === "in" ? "bg-info/20 border-info text-info" : "bg-muted border-border hover:bg-muted/80"}`}><Plus className="h-4 w-4 inline mr-1" /> Log Shortage (IN)</button>
-              <button type="button" onClick={() => setMode("out")} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${mode === "out" ? "bg-success/20 border-success text-success" : "bg-muted border-border hover:bg-muted/80"}`}><CheckCircle2 className="h-4 w-4 inline mr-1" /> Clear & Release (OUT)</button>
+              <button type="button" onClick={() => { setMode("in"); setParts(""); setNotes(""); }} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${mode === "in" ? "bg-info/20 border-info text-info" : "bg-muted border-border hover:bg-muted/80"}`}><Plus className="h-4 w-4 inline mr-1" /> Log New</button>
+              <button type="button" onClick={() => {
+                setMode("update");
+                const openSh = shortages.find(s => s.status === "open");
+                if (openSh) {
+                  setParts((openSh.parts as string[]).join(", "));
+                  setNotes(openSh.notes || "");
+                  setPartType((openSh.part_type as any) || "ckd");
+                  setResponsibility((openSh.responsibility as any) || "supplier");
+                  setShortageReason((openSh.shortage_reason as any) || "ckd");
+                  setReceivedBy(openSh.received_by || "");
+                }
+              }} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${mode === "update" ? "bg-amber-500/20 border-amber-500 text-amber-600" : "bg-muted border-border hover:bg-muted/80"}`}><Edit2 className="h-4 w-4 inline mr-1" /> Update</button>
+              <button type="button" onClick={() => setMode("out")} className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${mode === "out" ? "bg-success/20 border-success text-success" : "bg-muted border-border hover:bg-muted/80"}`}><CheckCircle2 className="h-4 w-4 inline mr-1" /> Clear</button>
             </div>
           )}
           {picked && mode === "in" && (
@@ -1356,6 +1406,38 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
               <div className="space-y-1.5"><Label>Received by (name)</Label><Input value={receivedBy} onChange={e => setReceivedBy(e.target.value)} placeholder="اسم المستلم / Person who delivered" /></div>
               <div className="space-y-1.5"><Label>Notes (optional)</Label><Textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Additional details / تفاصيل إضافية" /></div>
               <Button disabled={busy} className="w-full" onClick={submitIn}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Plus className="h-4 w-4 mr-1" /> Log Shortage</>}</Button>
+            </div>
+          )}
+          {picked && mode === "update" && (
+            <div className="border rounded-md p-3 space-y-3 border-amber-500/40 bg-amber-500/5">
+              {openShortages.length === 0 ? (
+                <div className="text-sm text-muted-foreground py-2">No open shortage to update. Use "Log New" to create one.</div>
+              ) : (
+                <>
+                  <Label className="text-sm font-medium flex items-center gap-1"><Edit2 className="h-3 w-3" /> Update open shortage</Label>
+                  <div className="text-xs text-muted-foreground">
+                    Current parts: <span className="font-mono">{(openShortages[0].parts as string[]).join(", ")}</span>
+                  </div>
+                  <div className="space-y-1.5"><Label>Updated parts list (comma-separated)</Label><Input value={parts} onChange={e => setParts(e.target.value)} placeholder="exhaust pipe, rear wiper / قطعة غيار" /></div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5"><Label>Shortage Reason</Label>
+                      <select value={shortageReason} onChange={e => { setShortageReason(e.target.value); setPartType(e.target.value === "plastics" || e.target.value === "missing_plastics" ? "plastics" : e.target.value === "local" || e.target.value === "general_missing" || e.target.value === "unavailable_factory" ? "local" : "ckd"); }} className="w-full border rounded-md px-2 py-1.5 text-sm bg-background">
+                        <option value="ckd">CKD</option>
+                        <option value="local">Local</option>
+                        <option value="unavailable_factory">Unavailable in Factory</option>
+                        <option value="missing_plastics">Missing (Plastics Paint Shop)</option>
+                        <option value="missing_paint_miscolored">Scratches (Paint Shop)</option>
+                        <option value="general_missing">General Missing</option>
+                        <option value="plastics">Plastics</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5"><Label>Responsibility</Label><div className="flex gap-2"><button type="button" onClick={() => setResponsibility("afa")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "afa" ? "bg-warning/20 border-warning text-warning" : "bg-muted border-border"}`}>Against AFA</button><button type="button" onClick={() => setResponsibility("supplier")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "supplier" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>Against Supplier</button></div></div>
+                  </div>
+                  <div className="space-y-1.5"><Label>Received by (name)</Label><Input value={receivedBy} onChange={e => setReceivedBy(e.target.value)} placeholder="اسم المستلم / Person who delivered" /></div>
+                  <div className="space-y-1.5"><Label>Notes</Label><Textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Additional details / تفاصيل إضافية" /></div>
+                  <Button disabled={busy} className="w-full bg-amber-600 hover:bg-amber-700" onClick={updateShortage}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Edit2 className="h-4 w-4 mr-1" /> Update Shortage</>}</Button>
+                </>
+              )}
             </div>
           )}
           {picked && mode === "out" && (

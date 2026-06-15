@@ -41,10 +41,12 @@ function Page() {
       <Tabs defaultValue="users">
         <TabsList>
           <TabsTrigger value="users">Users & Access</TabsTrigger>
+          <TabsTrigger value="presence">Online Presence</TabsTrigger>
           <TabsTrigger value="activity">Activity Log</TabsTrigger>
           {isSuperuser && <TabsTrigger value="contracts">Contract Production</TabsTrigger>}
         </TabsList>
         <TabsContent value="users"><UsersPanel isSuperuser={isSuperuser} /></TabsContent>
+        <TabsContent value="presence"><PresencePanel /></TabsContent>
         <TabsContent value="activity"><ActivityLog /></TabsContent>
         {isSuperuser && <TabsContent value="contracts"><ContractProductionPanel /></TabsContent>}
       </Tabs>
@@ -295,6 +297,113 @@ function ActivityLog() {
           )}
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// --- Online Presence Panel ---
+interface PresenceRow {
+  user_id: string;
+  is_online: boolean;
+  last_heartbeat: string;
+  first_seen_today: string | null;
+  total_active_seconds: number;
+  profile: { display_name: string } | null;
+}
+
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function PresencePanel() {
+  const [rows, setRows] = useState<PresenceRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const reload = async () => {
+    setLoading(true);
+    // Mark stale users offline first
+    await supabase.rpc("mark_stale_offline");
+    const { data, error } = await supabase
+      .from("user_presence")
+      .select("user_id, is_online, last_heartbeat, first_seen_today, total_active_seconds, profile:profiles(display_name)")
+      .order("is_online", { ascending: false });
+    if (!error) setRows((data ?? []) as unknown as PresenceRow[]);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    reload();
+    const ch = supabase.channel("presence-admin")
+      .on("postgres_changes", { event: "*", schema: "public", table: "user_presence" }, reload)
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, []);
+
+  const onlineCount = rows.filter(r => r.is_online).length;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <Badge variant="success" className="gap-1">
+          <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" /></span>
+          {onlineCount} online
+        </Badge>
+        <span className="text-sm text-muted-foreground">{rows.length} total users</span>
+        <Button variant="outline" size="sm" onClick={reload} disabled={loading}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh"}
+        </Button>
+      </div>
+
+      {loading && rows.length === 0 ? (
+        <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+      ) : rows.length === 0 ? (
+        <EmptyState icon={History} title="No presence data" description="User activity will appear here once users log in." />
+      ) : (
+        <div className="border rounded-md overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-card">
+              <tr className="bg-muted">
+                <th className="p-2 text-left font-semibold">Status</th>
+                <th className="p-2 text-left font-semibold">User</th>
+                <th className="p-2 text-left font-semibold">Last Heartbeat</th>
+                <th className="p-2 text-left font-semibold">First Seen Today</th>
+                <th className="p-2 text-left font-semibold">Active Time Today</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {rows.map(r => (
+                <tr key={r.user_id} className={r.is_online ? "" : "opacity-60"}>
+                  <td className="p-2">
+                    {r.is_online ? (
+                      <span className="relative flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
+                      </span>
+                    ) : (
+                      <span className="inline-flex rounded-full h-3 w-3 bg-gray-400" />
+                    )}
+                  </td>
+                  <td className="p-2 font-medium">{r.profile?.display_name ?? "Unknown"}</td>
+                  <td className="p-2 text-xs text-muted-foreground">
+                    {r.last_heartbeat ? new Date(r.last_heartbeat).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
+                  </td>
+                  <td className="p-2 text-xs text-muted-foreground">
+                    {r.first_seen_today ? new Date(r.first_seen_today).toLocaleString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "—"}
+                  </td>
+                  <td className="p-2">
+                    <Badge variant={r.total_active_seconds > 3600 ? "success" : r.total_active_seconds > 0 ? "info" : "muted"} className="text-[10px]">
+                      {formatDuration(r.total_active_seconds)}
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

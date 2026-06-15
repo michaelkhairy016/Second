@@ -5,6 +5,7 @@ import autotable from "https://esm.sh/jspdf-autotable@3.8.4";
 interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
+  RESEND_API_KEY?: string;
 }
 
 Deno.serve(async (req: Request) => {
@@ -29,7 +30,8 @@ Deno.serve(async (req: Request) => {
     // Load email settings
     const { data: emailSettings } = await supabase.from("app_settings").select("value").eq("key", "report_emails").single();
     const emails = (emailSettings?.value as any)?.emails ?? [];
-    const resendApiKey = (emailSettings?.value as any)?.resend_api_key ?? "";
+    // Prefer edge-function secret; fall back to app_settings during migration
+    const resendApiKey = (env.RESEND_API_KEY || (emailSettings?.value as any)?.resend_api_key) ?? "";
 
     if (!resendApiKey || emails.length === 0) {
       return new Response(JSON.stringify({ error: "No Resend API key or emails configured" }), {
@@ -40,28 +42,23 @@ Deno.serve(async (req: Request) => {
 
     const monthStart = reportDate.slice(0, 8) + "01";
 
-    // Fetch data
+    // Fetch data (events via unified RPC so archived vehicles are counted)
     const [vehiclesRes, eventsRes, plansRes, lotsRes, mtdRes] = await Promise.all([
       supabase.from("vehicles").select("id, current_station, lot_id").is("completed_at", null),
-      supabase.from("station_events").select("station, kind, recorded_at, vehicle_id").gte("recorded_at", `${reportDate}T00:00:00`).lte("recorded_at", `${reportDate}T23:59:59`),
+      supabase.rpc("get_production_events", { p_from: `${reportDate}T00:00:00`, p_to: `${reportDate}T23:59:59` }),
       supabase.from("production_plans").select("monthly_plan, daily_target, jph_target, model:models(name)").eq("month", monthStart),
       supabase.from("lots").select("id, model"),
       supabase.from("factory_calendar").select("working_hours").gte("date", monthStart).lte("date", reportDate).eq("is_working_day", true),
     ]);
 
     const vehicles = vehiclesRes.data ?? [];
-    const events = eventsRes.data ?? [];
+    const events = (eventsRes.data ?? []) as any[];
     const plans = plansRes.data ?? [];
     const lots = lotsRes.data ?? [];
     const lotMap = Object.fromEntries(lots.map((l: any) => [l.id, l.model]));
 
-    const vModel = new Map<string, string>();
-    vehicles.forEach((v: any) => {
-      if (v.lot_id && lotMap[v.lot_id]) vModel.set(v.id, lotMap[v.lot_id]);
-    });
-
     const modelSet = new Set<string>();
-    vehicles.forEach((v: any) => { if (vModel.has(v.id)) modelSet.add(vModel.get(v.id)!); });
+    events.forEach((e: any) => { if (e.model) modelSet.add(e.model); });
     plans.forEach((p: any) => { if (p.model?.name) modelSet.add(p.model.name); });
     const models = Array.from(modelSet).sort();
 
@@ -79,7 +76,7 @@ Deno.serve(async (req: Request) => {
     const outsPerStationModel: Record<string, Record<string, number>> = {};
     stations.forEach(s => { outsPerStationModel[s.code] = {}; models.forEach(m => { outsPerStationModel[s.code][m] = 0; }); });
     events.filter((e: any) => e.kind === "out").forEach((e: any) => {
-      const model = vModel.get(e.vehicle_id);
+      const model = e.model;
       if (model && outsPerStationModel[e.station]) {
         outsPerStationModel[e.station][model] = (outsPerStationModel[e.station][model] ?? 0) + 1;
       }
