@@ -26,7 +26,7 @@ export const Route = createFileRoute("/dashboard")({
 type EventRow = { station: string; kind: string; recorded_at: string; vehicle_id: string; model?: string | null; vin?: string | null; archived?: boolean };
 type ShortageRow = {
   id: string; vehicle_id: string; parts: string[]; shortage_reason: string | null; part_type: string | null;
-  status: string; created_at: string; vehicle: { vin: string; vin_suffix: string } | null;
+  status: string; created_at: string; cleared_at?: string | null; vehicle: { vin: string; vin_suffix: string } | null;
 };
 type VehicleRow = { id: string; current_station: string | null; lot_id: string | null; vin: string; vin_suffix: string; updated_at: string; contract_model: string | null; completed_at: string | null };
 type LotRow = { id: string; model: string };
@@ -120,7 +120,7 @@ function Page() {
       supabase.from("issues").select("id, vehicle_id, status, title").in("status", ["open", "in_progress"]),
       // Monthly events: full month range via unified RPC (includes archived vehicles)
       supabase.rpc("get_production_events", { p_from: `${monthStart}T00:00:00`, p_to: monthEndDate }),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, vehicle:vehicles(vin, vin_suffix)").gte("created_at", `${monthStart}T00:00:00`).lte("created_at", monthEndDate),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, vin_suffix)").gte("created_at", `${monthStart}T00:00:00`).lte("created_at", monthEndDate),
       supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at").eq("status", "open"),
       supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, vin_suffix)").eq("status", "cleared").gte("cleared_at", dayStart).lte("cleared_at", dayEnd),
       // ALL vehicles (incl. completed) — single source for WIP + model resolution
@@ -137,18 +137,16 @@ function Page() {
     setAllOpenShortages((osRes.data ?? []) as unknown as ShortageRow[]);
     setShortagesClearedToday((clRes.data ?? []) as unknown as ShortageRow[]);
 
-    // Fetch working hours from calendar via RPC (only for today's live data)
-    if (isToday) {
-      const allStations = ["body_shop", "wbs", "paint", "pbs", "shortage", "repair", "cs", "pdi", "tcf", "tcf_offline"];
-      const { data: whData } = await supabase.rpc("get_wip_working_hours", { station_codes: allStations });
-      const whMap = new Map<string, { entered_at: string; working_hours: number; working_days: number }>();
-      (whData as any[] ?? []).forEach((r: any) => {
-        whMap.set(r.vehicle_id, { entered_at: r.entered_at, working_hours: Number(r.working_hours ?? 0) || 0, working_days: Number(r.working_days ?? 0) || 0 });
-      });
-      setWorkingHoursMap(whMap);
-    } else {
-      setWorkingHoursMap(new Map());
-    }
+    // Fetch entry times + working hours from calendar RPC for EVERY selected date.
+    // (entered_at is always valid historically; working_hours is relative-to-now, which is
+    // acceptable/secondary — showing an entry date matters more than precise historical hours.)
+    const allStations = ["body_shop", "wbs", "paint", "pbs", "shortage", "repair", "cs", "pdi", "tcf", "tcf_offline"];
+    const { data: whData } = await supabase.rpc("get_wip_working_hours", { station_codes: allStations });
+    const whMap = new Map<string, { entered_at: string; working_hours: number; working_days: number }>();
+    (whData as any[] ?? []).forEach((r: any) => {
+      whMap.set(r.vehicle_id, { entered_at: r.entered_at, working_hours: Number(r.working_hours ?? 0) || 0, working_days: Number(r.working_days ?? 0) || 0 });
+    });
+    setWorkingHoursMap(whMap);
     setMonthlyEvents(((mEvRes.data ?? []) as unknown) as EventRow[]);
     setMonthlyShortages((mShRes.data ?? []) as unknown as ShortageRow[]);
 
@@ -409,8 +407,21 @@ function Page() {
     return rows.sort((a, b) => new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime());
   }, [allHistoryEvents, station, vinSearch, vehicleIssues, vehicleShortageCategory]);
 
+  // Latest "in" timestamp per vehicle+station — used to resolve the entry date for OUT rows.
+  // (For an out event, the entry is the most recent in at that same station.)
+  const stationEntryMap = useMemo(() => {
+    const latest = new Map<string, string>();
+    allHistoryEvents.forEach(e => {
+      if (e.kind !== "in" || !e.vehicle_id) return;
+      const key = `${e.vehicle_id}|${e.station}`;
+      const prev = latest.get(key);
+      if (!prev || new Date(e.recorded_at).getTime() > new Date(prev).getTime()) latest.set(key, e.recorded_at);
+    });
+    return latest;
+  }, [allHistoryEvents]);
+
   // Build vehicle detail rows for cell dialog
-  const buildCellRows = useCallback((category: string, direction: "in" | "out" | "wip", period: "today" | "month" = "today"): { vin: string; model: string; station: string | null; issue: string }[] => {
+  const buildCellRows = useCallback((category: string, direction: "in" | "out" | "wip", period: "today" | "month" = "today"): { vin: string; model: string; station: string | null; issue: string; enteredAt?: string | null }[] => {
     const vinMap = new Map<string, string>();
     allVehicles.forEach(v => vinMap.set(v.id, v.vin));
 
@@ -419,7 +430,7 @@ function Page() {
         .filter(v => {
           let cat = "OK";
           if (activeDept === "shortages") cat = vehicleShortageCategory.get(v.id) ?? "CKD";
-          else if (activeDept === "pbs") category = classifyPbs(v.id);
+          else if (activeDept === "pbs") cat = classifyPbs(v.id);
           else if (activeDept === "wbs") cat = classifyWbs(v.id);
           return cat === category;
         })
@@ -463,6 +474,8 @@ function Page() {
           model: vModel.get(s.vehicle_id) || "—",
           station: null,
           issue: (s.parts || []).join(", ") || (s as any).notes || "",
+          // In = when shortage was logged (created_at); Out = when cleared (cleared_at)
+          enteredAt: direction === "out" ? (s.cleared_at ?? s.created_at) : s.created_at,
         }));
     }
 
@@ -480,8 +493,13 @@ function Page() {
         model: e.model || vModel.get(e.vehicle_id) || "—",
         station: null,
         issue: (vehicleIssues.get(e.vehicle_id) ?? []).join("; "),
+        // For an IN row the event timestamp IS the entry. For an OUT row, resolve the
+        // matching prior "in" at the same station; fall back to the out timestamp itself.
+        enteredAt: direction === "out"
+          ? (e.vehicle_id ? (stationEntryMap.get(`${e.vehicle_id}|${e.station}`) ?? e.recorded_at) : e.recorded_at)
+          : e.recorded_at,
       }));
-  }, [wipVehicles, dayEvents, monthDayEvents, activeDept, vehicleIssues, vehicleShortageCategory, vModel, lotMap, allVehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday, monthlyShortages]);
+  }, [wipVehicles, dayEvents, monthDayEvents, activeDept, vehicleIssues, vehicleShortageCategory, vModel, lotMap, allVehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday, monthlyShortages, stationEntryMap]);
 
   const downloadReport = async (period: "day" | "month" = "day") => {
     setReportBusy(true);

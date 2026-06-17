@@ -123,9 +123,12 @@ function drawPieChart(doc: any, cx: number, cy: number, r: number, data: { label
       const a = angle + (i / steps) * sliceAngle;
       points.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
     }
-    // Draw filled polygon using path
+    // Draw filled polygon using path.
+    // jsPDF.lines(lines, x, y, scale, style, closed) — style MUST be 'S'|'F'|'DF'|null
+    // (any other value throws "Invalid arguments passed to jsPDF.lines").
     doc.setDrawColor(d.color[0], d.color[1], d.color[2]);
-    doc.lines(points.map(([x, y]) => [x - points[0][0], y - points[0][1]]), cx, cy, undefined, true, "F");
+    const piePts = points.map(([x, y]) => [x - points[0][0], y - points[0][1]]);
+    if (piePts.length >= 2) doc.lines(piePts, cx, cy, [1, 1], "F", true);
     angle += sliceAngle;
   });
 
@@ -171,7 +174,9 @@ function drawArcSlice(doc: any, cx: number, cy: number, r: number, a1: number, a
     const a = a1 + (i / steps) * (a2 - a1);
     points.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
   }
-  doc.lines(points.map(([x, y]) => [x - points[0][0], y - points[0][1]]), cx, cy, undefined, true, "F");
+  // jsPDF.lines(lines, x, y, scale, style, closed) — style must be 'F', closed boolean.
+  const arcPts = points.map(([x, y]) => [x - points[0][0], y - points[0][1]]);
+  if (arcPts.length >= 2) doc.lines(arcPts, cx, cy, [1, 1], "F", true);
 }
 
 function drawGauge(doc: any, cx: number, cy: number, r: number, pct: number, label: string, valueText: string, color: number[]) {
@@ -511,15 +516,17 @@ Deno.serve(async (req: Request) => {
       value: c.vehicles.length,
       color: chartColors[i % chartColors.length],
     }));
-    // Bar chart on left half
-    drawBarChart(doc, 14, y, pageWidth / 2 - 25, 45, chartData);
+    // Bar chart on left half (charts are non-essential — never let them fail the report)
+    try { drawBarChart(doc, 14, y, pageWidth / 2 - 25, 45, chartData); } catch (e) { console.error("bar chart failed:", e); }
 
     // Pie/donut chart on right half
     if (chartData.length > 0) {
       const pieCx = pageWidth / 2 + 30;
       const pieCy = y + 22;
-      drawPieChart(doc, pieCx, pieCy, 20, chartData);
-      drawPieLegend(doc, pieCx + 30, pieCy - chartData.length * 4, chartData);
+      try {
+        drawPieChart(doc, pieCx, pieCy, 20, chartData);
+        drawPieLegend(doc, pieCx + 30, pieCy - chartData.length * 4, chartData);
+      } catch (e) { console.error("pie chart failed:", e); }
     }
 
     y += Math.max(categories.length * 15 + 5, 45);
@@ -537,12 +544,14 @@ Deno.serve(async (req: Request) => {
     const gaugeSpacing = (pageWidth - 28) / 3;
     const gaugeColor = (pct: number) => pct > 0.5 ? [239, 68, 68] : pct > 0.2 ? [245, 158, 11] : [16, 185, 129];
 
-    drawGauge(doc, 14 + gaugeSpacing * 0.5, gaugeY, 14, wipVehicles.length > 0 ? 1 : 0, "WIP Utilization", `${wipVehicles.length}`, [59, 130, 246]);
-    drawGauge(doc, 14 + gaugeSpacing * 1.5, gaugeY, 14, delayPct, "Delayed WIP %", `${(delayPct * 100).toFixed(0)}%`, gaugeColor(delayPct));
-    const okPct = wipVehicles.length > 0
-      ? categories.filter(c => c.name === "No Issue" || c.name === "OK").reduce((s, c) => s + c.vehicles.length, 0) / wipVehicles.length
-      : 0;
-    drawGauge(doc, 14 + gaugeSpacing * 2.5, gaugeY, 14, okPct, "OK Rate", `${(okPct * 100).toFixed(0)}%`, gaugeColor(1 - okPct));
+    try {
+      drawGauge(doc, 14 + gaugeSpacing * 0.5, gaugeY, 14, wipVehicles.length > 0 ? 1 : 0, "WIP Utilization", `${wipVehicles.length}`, [59, 130, 246]);
+      drawGauge(doc, 14 + gaugeSpacing * 1.5, gaugeY, 14, delayPct, "Delayed WIP %", `${(delayPct * 100).toFixed(0)}%`, gaugeColor(delayPct));
+      const okPct = wipVehicles.length > 0
+        ? categories.filter(c => c.name === "No Issue" || c.name === "OK").reduce((s, c) => s + c.vehicles.length, 0) / wipVehicles.length
+        : 0;
+      drawGauge(doc, 14 + gaugeSpacing * 2.5, gaugeY, 14, okPct, "OK Rate", `${(okPct * 100).toFixed(0)}%`, gaugeColor(1 - okPct));
+    } catch (e) { console.error("gauge chart failed:", e); }
     y = gaugeY + 22;
 
     // === DAILY BREAKDOWN (monthly reports only) ===
@@ -606,14 +615,16 @@ Deno.serve(async (req: Request) => {
         value: e[1],
         color: chartColors[i % chartColors.length],
       }));
-      drawBarChart(doc, 14, y, pageWidth / 2 - 20, 40, modelChartData);
+      try { drawBarChart(doc, 14, y, pageWidth / 2 - 20, 40, modelChartData); } catch (e) { console.error("model bar chart failed:", e); }
 
       // Pie chart for models on right
       if (modelChartData.length > 0) {
         const mpCx = pageWidth / 2 + 30;
         const mpCy = y + 22;
-        drawPieChart(doc, mpCx, mpCy, 20, modelChartData);
-        drawPieLegend(doc, mpCx + 30, mpCy - modelChartData.length * 4, modelChartData);
+        try {
+          drawPieChart(doc, mpCx, mpCy, 20, modelChartData);
+          drawPieLegend(doc, mpCx + 30, mpCy - modelChartData.length * 4, modelChartData);
+        } catch (e) { console.error("model pie chart failed:", e); }
       }
       y += Math.max(modelEntries.length * 15 + 5, 40);
     }

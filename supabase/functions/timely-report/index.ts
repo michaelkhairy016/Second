@@ -46,7 +46,9 @@ function drawArcSlice(doc: any, cx: number, cy: number, r: number, a1: number, a
     const a = a1 + (i / steps) * (a2 - a1);
     points.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
   }
-  doc.lines(points.map(([x, y]) => [x - points[0][0], y - points[0][1]]), cx, cy, undefined, true, "F");
+  // jsPDF.lines(lines, x, y, scale, style, closed) — style must be 'S'|'F'|'DF'|null, closed boolean.
+  const arcPts = points.map(([x, y]) => [x - points[0][0], y - points[0][1]]);
+  if (arcPts.length >= 2) doc.lines(arcPts, cx, cy, [1, 1], "F", true);
 }
 
 function drawPieChart(doc: any, cx: number, cy: number, r: number, data: { label: string; value: number; color: number[] }[]) {
@@ -306,7 +308,7 @@ Deno.serve(async (req: Request) => {
         const totalOut = stations.reduce((s, st) => s + (outsPerStationModel[st.code]?.[m] ?? 0), 0);
         const pct = p.monthly > 0 ? totalOut / p.monthly : 0;
         const color = pct > 0.8 ? [16, 185, 129] : pct > 0.5 ? [245, 158, 11] : [239, 68, 68];
-        drawGauge(doc, 14 + gaugeSpacing * i + gaugeSpacing / 2, gaugeY, 14, pct, m, `${(pct * 100).toFixed(0)}%`, color);
+        try { drawGauge(doc, 14 + gaugeSpacing * i + gaugeSpacing / 2, gaugeY, 14, pct, m, `${(pct * 100).toFixed(0)}%`, color); } catch (e) { console.error("gauge failed:", e); }
       });
       y = gaugeY + 22;
     }
@@ -358,13 +360,15 @@ Deno.serve(async (req: Request) => {
     }).filter(d => d.value > 0);
 
     if (throughputData.length > 0) {
-      drawBarChart(doc, 14, y, pageWidth / 2 - 25, 40, throughputData);
+      try { drawBarChart(doc, 14, y, pageWidth / 2 - 25, 40, throughputData); } catch (e) { console.error("bar failed:", e); }
 
       // Station throughput pie chart
       const pieCx = pageWidth / 2 + 30;
       const pieCy = y + 22;
-      drawPieChart(doc, pieCx, pieCy, 20, throughputData);
-      drawPieLegend(doc, pieCx + 30, pieCy - throughputData.length * 4, throughputData);
+      try {
+        drawPieChart(doc, pieCx, pieCy, 20, throughputData);
+        drawPieLegend(doc, pieCx + 30, pieCy - throughputData.length * 4, throughputData);
+      } catch (e) { console.error("pie failed:", e); }
     }
     y += Math.max(throughputData.length * 15 + 5, 40);
 
@@ -413,8 +417,10 @@ Deno.serve(async (req: Request) => {
 
       const mpCx = pageWidth / 4 + 10;
       const mpCy = y + 22;
-      drawPieChart(doc, mpCx, mpCy, 22, modelPieData);
-      drawPieLegend(doc, mpCx + 35, mpCy - modelPieData.length * 4, modelPieData);
+      try {
+        drawPieChart(doc, mpCx, mpCy, 22, modelPieData);
+        drawPieLegend(doc, mpCx + 35, mpCy - modelPieData.length * 4, modelPieData);
+      } catch (e) { console.error("model pie failed:", e); }
 
       // WIP by station bar chart on right
       const wipChartData = stations.map((st, i) => {
@@ -427,7 +433,7 @@ Deno.serve(async (req: Request) => {
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 41, 59);
         doc.text("WIP by Station", pageWidth / 2 + 10, y - 3);
-        drawBarChart(doc, pageWidth / 2 + 10, y, pageWidth / 2 - 24, 40, wipChartData);
+        try { drawBarChart(doc, pageWidth / 2 + 10, y, pageWidth / 2 - 24, 40, wipChartData); } catch (e) { console.error("wip bar failed:", e); }
       }
       y += Math.max(modelPieData.length * 8 + 15, 45);
     }
