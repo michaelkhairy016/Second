@@ -112,31 +112,15 @@ function drawPieChart(doc: any, cx: number, cy: number, r: number, data: { label
   const total = data.reduce((s, d) => s + d.value, 0);
   if (total === 0) return;
   let angle = -Math.PI / 2;
-
+  // Donut = thick stroked arcs, one per slice. Stroked arcs render reliably;
+  // filled-wedge polygons (doc.lines style "F") do not in this jsPDF version.
+  const ring = Math.max(6, r * 0.4);
   data.forEach((d) => {
     const sliceAngle = (d.value / total) * 2 * Math.PI;
-    doc.setFillColor(d.color[0], d.color[1], d.color[2]);
-    // Draw pie slice as filled polygon
-    const steps = Math.max(Math.ceil(sliceAngle / 0.05), 4);
-    const points: number[][] = [[cx, cy]];
-    for (let i = 0; i <= steps; i++) {
-      const a = angle + (i / steps) * sliceAngle;
-      points.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
-    }
-    // Draw filled polygon using path.
-    // jsPDF.lines(lines, x, y, scale, style, closed) — style MUST be 'S'|'F'|'DF'|null
-    // (any other value throws "Invalid arguments passed to jsPDF.lines").
-    doc.setDrawColor(d.color[0], d.color[1], d.color[2]);
-    const piePts = points.map(([x, y]) => [x - points[0][0], y - points[0][1]]);
-    if (piePts.length >= 2) doc.lines(piePts, cx, cy, [1, 1], "F", true);
+    if (sliceAngle > 0) drawArc(doc, cx, cy, r, angle, angle + sliceAngle, ring, d.color);
     angle += sliceAngle;
   });
 
-  // White center for donut
-  doc.setFillColor(255, 255, 255);
-  doc.ellipse(cx, cy, r * 0.5, r * 0.5, "F");
-
-  // Center text
   doc.setFontSize(10);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(30, 41, 59);
@@ -179,36 +163,37 @@ function drawArcSlice(doc: any, cx: number, cy: number, r: number, a1: number, a
   if (arcPts.length >= 2) doc.lines(arcPts, cx, cy, [1, 1], "F", true);
 }
 
+// Stroked arc (clean curved line) — used for ring gauges. style 'S' = stroke.
+function drawArc(doc: any, cx: number, cy: number, r: number, a1: number, a2: number, lineWidth: number, color: number[]) {
+  const steps = Math.max(Math.ceil(Math.abs(a2 - a1) / 0.05), 4);
+  const abs: number[][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = a1 + (i / steps) * (a2 - a1);
+    abs.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  // jsPDF.lines: x,y = start point; lines[] = relative [dx,dy] shifts; style 'S' strokes.
+  const shifts: number[][] = abs.slice(1).map((p, i) => [p[0] - abs[i][0], p[1] - abs[i][1]]);
+  doc.setDrawColor(color[0], color[1], color[2]);
+  doc.setLineWidth(lineWidth);
+  try { doc.setLineCap("round"); } catch (e) { /* older jsPDF */ }
+  if (shifts.length >= 1) doc.lines(shifts, abs[0][0], abs[0][1], [1, 1], "S", false);
+  try { doc.setLineCap("butt"); } catch (e) { /* reset */ }
+}
+
 function drawGauge(doc: any, cx: number, cy: number, r: number, pct: number, label: string, valueText: string, color: number[]) {
   const startAngle = Math.PI * 0.75;
   const endAngle = Math.PI * 2.25;
   const totalAngle = endAngle - startAngle;
-  const fillAngle = startAngle + totalAngle * Math.min(pct, 1);
+  const clampedPct = Math.min(Math.max(pct, 0), 1);
+  const fillAngle = startAngle + totalAngle * clampedPct;
 
-  // Background arc segments
-  const bgSteps = 12;
-  for (let i = 0; i < bgSteps; i++) {
-    const a1 = startAngle + (i / bgSteps) * totalAngle;
-    const a2 = startAngle + ((i + 1) / bgSteps) * totalAngle;
-    drawArcSlice(doc, cx, cy, r, a1, a2, [226, 232, 240]);
-  }
-
-  // Filled arc segments
-  if (pct > 0) {
-    const fillSteps = Math.max(Math.ceil(pct * bgSteps), 2);
-    for (let i = 0; i < fillSteps; i++) {
-      const a1 = startAngle + (i / fillSteps) * (fillAngle - startAngle);
-      const a2 = startAngle + ((i + 1) / fillSteps) * (fillAngle - startAngle);
-      drawArcSlice(doc, cx, cy, r, a1, a2, color);
-    }
-  }
-
-  // White center
-  doc.setFillColor(255, 255, 255);
-  doc.ellipse(cx, cy, r * 0.6, r * 0.6, "F");
+  // Background ring (light gray, stroked)
+  drawArc(doc, cx, cy, r, startAngle, endAngle, 4, [226, 232, 240]);
+  // Value ring (colored, stroked)
+  if (clampedPct > 0) drawArc(doc, cx, cy, r, startAngle, fillAngle, 4, color);
 
   // Center value
-  doc.setFontSize(8);
+  doc.setFontSize(9);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(30, 41, 59);
   doc.text(valueText, cx, cy, { align: "center", baseline: "middle" });
@@ -217,7 +202,7 @@ function drawGauge(doc: any, cx: number, cy: number, r: number, pct: number, lab
   doc.setFontSize(6);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(100, 116, 139);
-  doc.text(label, cx, cy + r + 4, { align: "center", baseline: "middle" });
+  doc.text(label, cx, cy + r + 5, { align: "center", baseline: "middle" });
 }
 
 Deno.serve(async (req: Request) => {
@@ -530,29 +515,6 @@ Deno.serve(async (req: Request) => {
     }
 
     y += Math.max(categories.length * 15 + 5, 45);
-
-    // === KPI GAUGES ===
-    needSpace(35);
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(30, 41, 59);
-    doc.text("Performance Gauges", 14, y);
-    y += 5;
-
-    const delayPct = wipVehicles.length > 0 ? delayedWip / wipVehicles.length : 0;
-    const gaugeY = y + 12;
-    const gaugeSpacing = (pageWidth - 28) / 3;
-    const gaugeColor = (pct: number) => pct > 0.5 ? [239, 68, 68] : pct > 0.2 ? [245, 158, 11] : [16, 185, 129];
-
-    try {
-      drawGauge(doc, 14 + gaugeSpacing * 0.5, gaugeY, 14, wipVehicles.length > 0 ? 1 : 0, "WIP Utilization", `${wipVehicles.length}`, [59, 130, 246]);
-      drawGauge(doc, 14 + gaugeSpacing * 1.5, gaugeY, 14, delayPct, "Delayed WIP %", `${(delayPct * 100).toFixed(0)}%`, gaugeColor(delayPct));
-      const okPct = wipVehicles.length > 0
-        ? categories.filter(c => c.name === "No Issue" || c.name === "OK").reduce((s, c) => s + c.vehicles.length, 0) / wipVehicles.length
-        : 0;
-      drawGauge(doc, 14 + gaugeSpacing * 2.5, gaugeY, 14, okPct, "OK Rate", `${(okPct * 100).toFixed(0)}%`, gaugeColor(1 - okPct));
-    } catch (e) { console.error("gauge chart failed:", e); }
-    y = gaugeY + 22;
 
     // === DAILY BREAKDOWN (monthly reports only) ===
     if (isMonthly) {

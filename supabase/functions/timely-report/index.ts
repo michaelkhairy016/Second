@@ -55,15 +55,13 @@ function drawPieChart(doc: any, cx: number, cy: number, r: number, data: { label
   const total = data.reduce((s, d) => s + d.value, 0);
   if (total === 0) return;
   let angle = -Math.PI / 2;
-
+  // Donut = thick stroked arcs, one per slice (reliable; filled wedges are not).
+  const ring = Math.max(6, r * 0.4);
   data.forEach((d) => {
     const sliceAngle = (d.value / total) * 2 * Math.PI;
-    drawArcSlice(doc, cx, cy, r, angle, angle + sliceAngle, d.color);
+    if (sliceAngle > 0) drawArc(doc, cx, cy, r, angle, angle + sliceAngle, ring, d.color);
     angle += sliceAngle;
   });
-
-  doc.setFillColor(255, 255, 255);
-  doc.ellipse(cx, cy, r * 0.5, r * 0.5, "F");
 
   doc.setFontSize(10);
   doc.setFont("helvetica", "bold");
@@ -93,32 +91,35 @@ function drawPieLegend(doc: any, x: number, y: number, data: { label: string; va
   });
 }
 
+// Stroked arc (clean curved line) — used for ring gauges. style 'S' = stroke.
+function drawArc(doc: any, cx: number, cy: number, r: number, a1: number, a2: number, lineWidth: number, color: number[]) {
+  const steps = Math.max(Math.ceil(Math.abs(a2 - a1) / 0.05), 4);
+  const abs: number[][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = a1 + (i / steps) * (a2 - a1);
+    abs.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  const shifts: number[][] = abs.slice(1).map((p, i) => [p[0] - abs[i][0], p[1] - abs[i][1]]);
+  doc.setDrawColor(color[0], color[1], color[2]);
+  doc.setLineWidth(lineWidth);
+  try { doc.setLineCap("round"); } catch (e) { /* older jsPDF */ }
+  if (shifts.length >= 1) doc.lines(shifts, abs[0][0], abs[0][1], [1, 1], "S", false);
+  try { doc.setLineCap("butt"); } catch (e) { /* reset */ }
+}
+
 function drawGauge(doc: any, cx: number, cy: number, r: number, pct: number, label: string, valueText: string, color: number[]) {
   const startAngle = Math.PI * 0.75;
   const endAngle = Math.PI * 2.25;
   const totalAngle = endAngle - startAngle;
-  const fillAngle = startAngle + totalAngle * Math.min(pct, 1);
+  const clampedPct = Math.min(Math.max(pct, 0), 1);
+  const fillAngle = startAngle + totalAngle * clampedPct;
 
-  const bgSteps = 12;
-  for (let i = 0; i < bgSteps; i++) {
-    const a1 = startAngle + (i / bgSteps) * totalAngle;
-    const a2 = startAngle + ((i + 1) / bgSteps) * totalAngle;
-    drawArcSlice(doc, cx, cy, r, a1, a2, [226, 232, 240]);
-  }
+  // Background ring (light gray, stroked)
+  drawArc(doc, cx, cy, r, startAngle, endAngle, 4, [226, 232, 240]);
+  // Value ring (colored, stroked)
+  if (clampedPct > 0) drawArc(doc, cx, cy, r, startAngle, fillAngle, 4, color);
 
-  if (pct > 0) {
-    const fillSteps = Math.max(Math.ceil(pct * bgSteps), 2);
-    for (let i = 0; i < fillSteps; i++) {
-      const a1 = startAngle + (i / fillSteps) * (fillAngle - startAngle);
-      const a2 = startAngle + ((i + 1) / fillSteps) * (fillAngle - startAngle);
-      drawArcSlice(doc, cx, cy, r, a1, a2, color);
-    }
-  }
-
-  doc.setFillColor(255, 255, 255);
-  doc.ellipse(cx, cy, r * 0.6, r * 0.6, "F");
-
-  doc.setFontSize(8);
+  doc.setFontSize(9);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(30, 41, 59);
   doc.text(valueText, cx, cy, { align: "center", baseline: "middle" });
@@ -126,7 +127,7 @@ function drawGauge(doc: any, cx: number, cy: number, r: number, pct: number, lab
   doc.setFontSize(6);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(100, 116, 139);
-  doc.text(label, cx, cy + r + 4, { align: "center", baseline: "middle" });
+  doc.text(label, cx, cy + r + 5, { align: "center", baseline: "middle" });
 }
 
 Deno.serve(async (req: Request) => {
@@ -290,27 +291,6 @@ Deno.serve(async (req: Request) => {
       });
 
       y = (doc as any).lastAutoTable.finalY + 8;
-
-      // === PLAN ACHIEVEMENT GAUGES ===
-      needSpace(35);
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(30, 41, 59);
-      doc.text("Plan Achievement", 14, y);
-      y += 5;
-
-      const gaugeY = y + 12;
-      const gaugeCount = Math.min(models.length, 5);
-      const gaugeSpacing = (pageWidth - 28) / gaugeCount;
-
-      models.slice(0, 5).forEach((m, i) => {
-        const p = planMap[m] ?? { monthly: 0, daily: 0, jph: 0 };
-        const totalOut = stations.reduce((s, st) => s + (outsPerStationModel[st.code]?.[m] ?? 0), 0);
-        const pct = p.monthly > 0 ? totalOut / p.monthly : 0;
-        const color = pct > 0.8 ? [16, 185, 129] : pct > 0.5 ? [245, 158, 11] : [239, 68, 68];
-        try { drawGauge(doc, 14 + gaugeSpacing * i + gaugeSpacing / 2, gaugeY, 14, pct, m, `${(pct * 100).toFixed(0)}%`, color); } catch (e) { console.error("gauge failed:", e); }
-      });
-      y = gaugeY + 22;
     }
 
     // === DAILY STATION ACTIVITY ===
