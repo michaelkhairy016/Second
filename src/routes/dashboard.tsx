@@ -42,13 +42,14 @@ const SHORTAGE_CATEGORIES = ["PLASTICS PART", "Local", "CKD", "Scratches"] as co
 const PBS_CATEGORIES = ["No Issue", "CKD", "Local", "Dismantled"] as const;
 const WBS_CATEGORIES = ["Issue", "OK"] as const;
 
-function mapShortageReason(raw: string | null): string {
-  if (!raw) return "CKD";
-  if (raw === "missing_plastics") return "PLASTICS PART";
-  if (raw === "plastics") return "PLASTICS PART";
+function mapShortageCategory(s: { shortage_reason: string | null; part_type?: string | null }): string {
+  // part_type is authoritative for CKD cars (e.g. a CKD car with a paint/miscolor issue is still CKD).
+  if (s.part_type === "ckd") return "CKD";
+  const raw = s.shortage_reason;
+  if (raw === "missing_plastics" || raw === "plastics") return "PLASTICS PART";
   if (raw === "local") return "Local";
   if (raw === "ckd") return "CKD";
-  if (raw.includes("scratch") || raw === "missing_paint_miscolored") return "Scratches";
+  if (raw && (raw.includes("scratch") || raw === "missing_paint_miscolored")) return "Scratches";
   return "Local";
 }
 
@@ -206,7 +207,7 @@ function Page() {
 
   const vehicleShortageCategory = useMemo(() => {
     const m = new Map<string, string>();
-    allOpenShortages.forEach(s => { if (s.vehicle_id) m.set(s.vehicle_id, mapShortageReason(s.shortage_reason)); });
+    allOpenShortages.forEach(s => { if (s.vehicle_id) m.set(s.vehicle_id, mapShortageCategory(s)); });
     return m;
   }, [allOpenShortages]);
 
@@ -269,23 +270,23 @@ function Page() {
       cats.forEach(c => { dayMap.In[c] = 0; dayMap.Out[c] = 0; });
       // In: all shortages created today (regardless of current status)
       shortages.forEach(s => {
-        const cat = mapShortageReason(s.shortage_reason);
+        const cat = mapShortageCategory(s);
         dayMap.In[cat] = (dayMap.In[cat] ?? 0) + 1;
       });
       // Out: shortages cleared today (cleared_at within selected date)
       shortagesClearedToday.forEach(s => {
-        const cat = mapShortageReason(s.shortage_reason);
+        const cat = mapShortageCategory(s);
         dayMap.Out[cat] = (dayMap.Out[cat] ?? 0) + 1;
       });
       const monthSh = monthlyShortages;
       const monthMap: Record<string, Record<string, number>> = { In: {}, Out: {} };
       cats.forEach(c => { monthMap.In[c] = 0; monthMap.Out[c] = 0; });
       monthSh.forEach(s => {
-        const cat = mapShortageReason(s.shortage_reason);
+        const cat = mapShortageCategory(s);
         monthMap.In[cat] = (monthMap.In[cat] ?? 0) + 1;
       });
       monthSh.filter(s => s.status === "cleared").forEach(s => {
-        const cat = mapShortageReason(s.shortage_reason);
+        const cat = mapShortageCategory(s);
         monthMap.Out[cat] = (monthMap.Out[cat] ?? 0) + 1;
       });
       const wipMap: Record<string, number> = {};
@@ -468,7 +469,7 @@ function Page() {
           : shortagesClearedToday;
       }
       return sourceShortages
-        .filter(s => mapShortageReason(s.shortage_reason) === category)
+        .filter(s => mapShortageCategory(s) === category)
         .map(s => ({
           vin: s.vehicle?.vin ?? vinMap.get(s.vehicle_id) ?? "—",
           model: vModel.get(s.vehicle_id) || "—",
@@ -849,7 +850,7 @@ function Page() {
                       <table className="w-full text-sm">
                         <thead className="sticky top-0 bg-card">
                           <tr className="bg-muted">
-                            <th className="p-2 font-semibold text-left">Time</th>
+                            <th className="p-2 font-semibold text-left">Date / Time</th>
                             <th className="p-2 font-semibold text-left">VIN</th>
                             <th className="p-2 font-semibold text-left">Model</th>
                             <th className="p-2 font-semibold text-left">Issue</th>
@@ -860,7 +861,7 @@ function Page() {
                         <tbody className="divide-y">
                           {vehicleTracing.map((r, i) => (
                             <tr key={i}>
-                              <td className="p-2">{new Date(r.recorded_at).toLocaleTimeString()}</td>
+                              <td className="p-2 whitespace-nowrap">{new Date(r.recorded_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(r.recorded_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false })}</td>
                               <td className="p-2 font-mono text-xs">{r.vin}</td>
                               <td className="p-2">{r.model}</td>
                               <td className="p-2 text-xs">{r.issue ? <Badge variant="destructive" className="text-[10px]">{r.issue}</Badge> : (d === "shortages" ? <span className="text-muted-foreground">—</span> : <Badge variant="success" className="text-[10px]">OK</Badge>)}</td>
@@ -1001,7 +1002,7 @@ function OverviewSection({ events, vehicles, allVehicles, issues, shortages, all
   const shortageDonut = useMemo(() => {
     const counts: Record<string, number> = {};
     allOpenShortages.forEach(s => {
-      const cat = mapShortageReason(s.shortage_reason);
+      const cat = mapShortageCategory(s);
       counts[cat] = (counts[cat] ?? 0) + 1;
     });
     return Object.entries(counts).map(([name, value]) => ({ name, value }));

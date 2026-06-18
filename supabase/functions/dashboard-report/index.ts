@@ -20,7 +20,7 @@ interface WipVehicle {
 
 const MODULE_CONFIG: Record<string, { title: string; stations: string[]; color: number[] }> = {
   shortage: { title: "Shortages WIP Status Report", stations: ["shortage"], color: [211, 84, 0] },
-  pbs: { title: "PBS WIP Status Report", stations: ["pbs", "tcf", "cs", "pdi"], color: [39, 174, 96] },
+  pbs: { title: "PBS WIP Status Report", stations: ["pbs"], color: [39, 174, 96] },
   wbs: { title: "WBS + Paint WIP Status Report", stations: ["wbs", "paint", "body_shop", "line_feeding"], color: [41, 128, 185] },
 };
 
@@ -42,6 +42,8 @@ function formatDateTime(iso: string | null): string {
 }
 
 function getCategoryForShortage(s: any): string {
+  // part_type is authoritative for CKD cars (e.g. a CKD car with a paint issue is still CKD).
+  if (s.part_type === "ckd") return "CKD";
   if (s.shortage_reason && REASON_MAP[s.shortage_reason]) return REASON_MAP[s.shortage_reason];
   return s.part_type === "ckd" ? "CKD" : "Local";
 }
