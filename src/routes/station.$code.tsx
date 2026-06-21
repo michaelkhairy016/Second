@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { findBySuffix, stripVinStars } from "@/lib/vin";
+import { restoreArchivedBySuffix } from "@/lib/restore-archived";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2, ClipboardList, ClipboardCheck, FileSpreadsheet, Plus, X, Package, ClipboardPenLine, PaintBucket, Edit2 } from "lucide-react";
@@ -335,33 +336,41 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
 
   const submit = async (kind: "in" | "out") => {
     if (!picked) return toast.error("Pick a VIN first");
+    // Archive-pull-on-scan: if the picked VIN is archived, restore it live before recording.
+    let v: typeof picked = picked;
+    if (picked.is_archived) {
+      const pulled = await restoreArchivedBySuffix(picked.vin_suffix).catch(() => null);
+      if (!pulled) { toast.error("Could not restore archived vehicle"); setBusy(false); return; }
+      v = { ...picked, id: pulled.id, vin: pulled.vin, vin_suffix: pulled.vin_suffix, current_station: pulled.current_station, actual_color_id: pulled.actual_color_id, is_archived: false } as typeof picked;
+      setPicked(v);
+    }
     // Duplicate prevention: block IN if already at station, block OUT if not at station
-    if (kind === "in" && picked.current_station === station) {
-      toast.warning(`${picked.vin} already at ${stationByCode(station)?.label ?? station}. Dismiss (OUT) first.`);
+    if (kind === "in" && v.current_station === station) {
+      toast.warning(`${v.vin} already at ${stationByCode(station)?.label ?? station}. Dismiss (OUT) first.`);
       setBusy(false); return;
     }
-    if (kind === "out" && picked.current_station !== station && !["paint"].includes(station)) {
-      toast.warning(`${picked.vin} is not at ${stationByCode(station)?.label ?? station} (at ${stationByCode(picked.current_station ?? "")?.label ?? picked.current_station ?? "—"}).`);
+    if (kind === "out" && v.current_station !== station && !["paint"].includes(station)) {
+      toast.warning(`${v.vin} is not at ${stationByCode(station)?.label ?? station} (at ${stationByCode(v.current_station ?? "")?.label ?? v.current_station ?? "—"}).`);
       setBusy(false); return;
     }
-    if (station === "paint" && !color && !picked.actual_color_id) return toast.error("Color required");
+    if (station === "paint" && !color && !v.actual_color_id) return toast.error("Color required");
     setBusy(true);
     try {
       // Paint station: smart color assignment + pull/push logic
       if (station === "paint") {
         const prePaintStations = ["warehouse", "line_feeding", "body_shop", "wbs"];
-        const vehicleStation = picked.current_station;
+        const vehicleStation = v.current_station;
 
         // Color already assigned on vehicle — only assign if no actual_color_id
-        if (!picked.actual_color_id && color) {
+        if (!v.actual_color_id && color) {
           // Color plan limit check
-          if (picked.job_order_id) {
-            const { data: jo } = await supabase.from("job_orders").select("color_plan").eq("id", picked.job_order_id).maybeSingle();
+          if (v.job_order_id) {
+            const { data: jo } = await supabase.from("job_orders").select("color_plan").eq("id", v.job_order_id).maybeSingle();
             const plan = (jo?.color_plan as Record<string, number>) ?? {};
             const limit = plan[color];
             if (typeof limit === "number") {
               const { count } = await supabase.from("vehicles").select("id", { count: "exact", head: true })
-                .eq("job_order_id", picked.job_order_id).eq("actual_color_id", color);
+                .eq("job_order_id", v.job_order_id).eq("actual_color_id", color);
               if ((count ?? 0) >= limit) {
                 const colorMap = await loadColorMap();
                 const colorName = colorMap.get(color)?.name ?? color;
@@ -370,7 +379,7 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
               }
             }
           }
-          await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked.id);
+          await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", v.id);
         }
 
         const user = (await supabase.auth.getUser()).data.user;
@@ -378,11 +387,11 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
         // Pre-paint: assign color + pull to paint
         if (vehicleStation && prePaintStations.includes(vehicleStation)) {
           await supabase.from("station_events").insert({
-            vehicle_id: picked.id, station: "paint", kind: "in", color_used_id: color || null, recorded_by: user?.id, source: "manual",
+            vehicle_id: v.id, station: "paint", kind: "in", color_used_id: color || null, recorded_by: user?.id, source: "manual",
             meta: { shift },
           });
-          await supabase.from("vehicles").update({ current_station: "paint" }).eq("id", picked.id);
-          toast.success(`Color assigned + pulled to paint: ${picked.vin}`);
+          await supabase.from("vehicles").update({ current_station: "paint" }).eq("id", v.id);
+          toast.success(`Color assigned + pulled to paint: ${v.vin}`);
           setSuffix(""); setPicked(null); setColor("");
           setBusy(false);
           return;
@@ -390,7 +399,7 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
 
         // Post-paint: just assign color if missing, don't move
         if (vehicleStation && postPaintStations.includes(vehicleStation)) {
-          toast.success(`Color assigned: ${picked.vin} (stays at ${vehicleStation})`);
+          toast.success(`Color assigned: ${v.vin} (stays at ${vehicleStation})`);
           setSuffix(""); setPicked(null); setColor("");
           setBusy(false);
           return;
@@ -398,23 +407,23 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
 
         // At paint: normal IN/OUT flow
         const { error } = await supabase.from("station_events").insert({
-          vehicle_id: picked.id, station, kind, color_used_id: color || null, recorded_by: user?.id, source: "manual",
+          vehicle_id: v.id, station, kind, color_used_id: color || null, recorded_by: user?.id, source: "manual",
           meta: { shift },
         });
         if (error) throw error;
         if (kind === "out") {
           // Contract vehicles: archive directly (exit factory)
-          if (picked.vin.startsWith("CONTRACT-")) {
-            await archiveContractVehicle(supabase, picked.id, "paint");
-            toast.success(`Archived: ${picked.contract_model ?? "Contract"} — ${picked.vin_suffix}`);
+          if (v.vin.startsWith("CONTRACT-")) {
+            await archiveContractVehicle(supabase, v.id, "paint");
+            toast.success(`Archived: ${v.contract_model ?? "Contract"} — ${v.vin_suffix}`);
             setSuffix(""); setPicked(null); setColor("");
             setBusy(false);
             return;
           }
           // Regular vehicles: advance to TCF (not PBS)
-          await supabase.from("vehicles").update({ current_station: "tcf" }).eq("id", picked.id);
+          await supabase.from("vehicles").update({ current_station: "tcf" }).eq("id", v.id);
         }
-        toast.success(`${kind.toUpperCase()} ${shift}: ${picked.vin}`);
+        toast.success(`${kind.toUpperCase()} ${shift}: ${v.vin}`);
         setSuffix(""); setPicked(null); setColor("");
         setBusy(false);
         return;
@@ -438,29 +447,29 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
       const user = (await supabase.auth.getUser()).data.user;
 
       // Post-paint color assignment: save color if selected and vehicle has none
-      if (color && !picked.actual_color_id && (postPaintStations.includes(station) || station === "shortage")) {
-        await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked.id);
+      if (color && !v.actual_color_id && (postPaintStations.includes(station) || station === "shortage")) {
+        await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", v.id);
       }
 
       // Create issue if issueText provided
       if (issueText.trim()) {
         const { error: ie } = await supabase.from("issues").insert({
-          vehicle_id: picked.id, station, title: issueText.trim(),
+          vehicle_id: v.id, station, title: issueText.trim(),
           severity: "medium", status: "open", reported_by: user?.id ?? null,
         });
         if (ie) toast.warning(`Issue save failed: ${ie.message}`);
       }
 
       const { error } = await supabase.from("station_events").insert({
-        vehicle_id: picked.id, station, kind, color_used_id: color || null, recorded_by: user?.id, source: "manual",
+        vehicle_id: v.id, station, kind, color_used_id: color || null, recorded_by: user?.id, source: "manual",
         meta: null,
       });
       if (error) throw error;
 
       // WBS OUT: Quik 300 contract vehicles auto-archive (electro deposition only)
-      if (kind === "out" && station === "wbs" && picked.vin.startsWith("CONTRACT-") && picked.contract_model === "Quik 300") {
-        await archiveContractVehicle(supabase, picked.id, "wbs");
-        toast.success(`Archived: Quik 300 — ${picked.vin_suffix}`);
+      if (kind === "out" && station === "wbs" && v.vin.startsWith("CONTRACT-") && v.contract_model === "Quik 300") {
+        await archiveContractVehicle(supabase, v.id, "wbs");
+        toast.success(`Archived: Quik 300 — ${v.vin_suffix}`);
         setSuffix(""); setPicked(null); setColor(""); setIssueText("");
         setBusy(false);
         return;
@@ -476,11 +485,11 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
       };
       const nextStation = (kind === "out" && nextStationMap[station]) ? nextStationMap[station]! : station;
 
-      await supabase.from("vehicles").update({ current_station: nextStation }).eq("id", picked.id);
+      await supabase.from("vehicles").update({ current_station: nextStation }).eq("id", v.id);
 
-      if (picked.is_lot_tail) toast.warning(`⚠️ Lot-tail vehicle: ${picked.tail_note ?? "Flagged"}`);
+      if (v.is_lot_tail) toast.warning(`⚠️ Lot-tail vehicle: ${v.tail_note ?? "Flagged"}`);
       if (lotShortageWarning && kind === "out") toast.warning(`⚠️ Vehicle released despite lot shortages`);
-      toast.success(`Recorded: ${picked.vin} ${kind.toUpperCase()}`);
+      toast.success(`Recorded: ${v.vin} ${kind.toUpperCase()}`);
       setSuffix(""); setPicked(null); setColor(""); setIssueText("");
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   };
@@ -976,7 +985,7 @@ function BulkPasteSection({ station }: { station: StationCode }) {
 
   const nextStationMap: Partial<Record<StationCode, StationCode>> = {
     wbs: "paint", pbs: "tcf", tcf: "waiting_repair", waiting_repair: "repair", repair: "cs",
-    paint: "pbs",
+    paint: "tcf",
   };
 
   const run = async () => {
@@ -993,7 +1002,15 @@ function BulkPasteSection({ station }: { station: StationCode }) {
           ? supabase.from("vehicles").select("id, vin").in("vin", [clean, `*${clean}*`]).is("completed_at", null).maybeSingle()
           : supabase.from("vehicles").select("id, vin").ilike("vin_suffix", `%${clean.slice(-5)}`).is("completed_at", null).limit(1).maybeSingle();
         const { data } = await q;
-        if (data) matched.push(data); else missing.push(raw);
+        if (!data) {
+          // Archive-pull-on-scan: pull from archive, then re-resolve
+          try {
+            const pulled = await restoreArchivedBySuffix(clean);
+            if (pulled) matched.push({ id: pulled.id, vin: pulled.vin }); else missing.push(raw);
+          } catch { missing.push(raw); }
+        } else {
+          matched.push(data);
+        }
       }
       if (matched.length === 0) throw new Error("No vehicles found");
 

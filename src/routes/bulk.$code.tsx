@@ -7,6 +7,7 @@ import { stationByCode, LAUNCH_MODE_STATIONS } from "@/lib/stations";
 import { useProductionMode } from "@/hooks/use-production-mode";
 import { stripVinStars } from "@/lib/vin";
 import { archiveContractVehicle } from "@/lib/contract-archive";
+import { restoreArchivedBySuffix } from "@/lib/restore-archived";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -141,6 +142,14 @@ function Page() {
           // 4-char suffix: individual ilike query (can't batch pattern matching)
           const { data: d } = await supabase.from("vehicles").select("id,vin,current_station,lot_id,actual_color_id").ilike("vin_suffix", `%${info.clean.slice(-4)}`).is("completed_at", null).limit(1).maybeSingle();
           data = d;
+        }
+
+        // Archive-pull-on-scan: if not live, pull from archive then re-resolve
+        if (!data) {
+          try {
+            const pulled = await restoreArchivedBySuffix(info.clean);
+            if (pulled) data = { id: pulled.id, vin: pulled.vin, current_station: pulled.current_station, lot_id: pulled.lot_id ?? null, actual_color_id: pulled.actual_color_id ?? null };
+          } catch { /* leave null -> reported as missing */ }
         }
 
         if (data) {

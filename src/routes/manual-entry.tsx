@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { STATIONS, type StationDef } from "@/lib/stations";
 import { useColors } from "@/hooks/use-colors";
 import type { StationCode } from "@/lib/db-types";
+import { restoreArchivedBySuffix } from "@/lib/restore-archived";
 
 export const Route = createFileRoute("/manual-entry")({
   head: () => ({ meta: [{ title: "Manual Entry — AFA Shopfloor" }] }),
@@ -25,7 +26,7 @@ const STATIONS_FOR_ENTRY = STATIONS.filter(s => s.code !== "warehouse" && s.code
 
 const nextStationMap: Partial<Record<StationCode, StationCode>> = {
   wbs: "paint",
-  paint: "pbs",
+  paint: "tcf",
   pbs: "tcf",
   tcf: "waiting_repair",
   waiting_repair: "repair",
@@ -85,7 +86,15 @@ function BulkStationEntry() {
 
     for (const suffix of vinList) {
       const s5 = suffix.slice(-5);
-      const match = (vehicles ?? []).find(v => v.vin_suffix === s5);
+      let match = (vehicles ?? []).find(v => v.vin_suffix === s5);
+
+      // Archive-pull-on-scan: if not live, pull from archive (restores vehicle + history)
+      if (!match) {
+        try {
+          const pulled = await restoreArchivedBySuffix(s5);
+          if (pulled) match = { id: pulled.id, vin: pulled.vin, vin_suffix: pulled.vin_suffix, current_station: pulled.current_station as any, completed_at: null } as any;
+        } catch { /* fall through to notFound */ }
+      }
 
       if (!match) {
         notFound.push(s5);
