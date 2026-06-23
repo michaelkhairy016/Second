@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": null,
+  "installCommand": null,
+  "outputDirectory": null,
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "https://admirable-moxie-b64a25.netlify.app/$1"
+    }
+  ]
+}
