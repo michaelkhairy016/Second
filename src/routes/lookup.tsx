@@ -14,6 +14,7 @@ import { findEngineBySuffix } from "@/lib/engine";
 import type { VehicleSearchResult, EngineSearchResult, Model, ModelTrim } from "@/lib/db-types";
 import { supabase } from "@/integrations/supabase/client";
 import { stationByCode, STATIONS } from "@/lib/stations";
+import { useColors } from "@/hooks/use-colors";
 
 export const Route = createFileRoute("/lookup")({
   head: () => ({ meta: [{ title: "Lookup — AFA Shopfloor" }] }),
@@ -52,6 +53,7 @@ function Page() {
 }
 
 function VehicleLookup() {
+  const { getCode } = useColors();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<VehicleSearchResult[]>([]);
   const [selected, setSelected] = useState<VehicleSearchResult | null>(null);
@@ -72,6 +74,34 @@ function VehicleLookup() {
 
   const selectVehicle = async (v: VehicleSearchResult) => {
     setSelected(v);
+
+    // Archived vehicle: history lives in vehicle_archive JSON (live tables are empty for it)
+    if ((v as any).is_archived) {
+      const { data } = await supabase
+        .from("vehicle_archive")
+        .select("vehicle_data, events_data, shortages_data, issues_data")
+        .eq("vin", v.vin)
+        .limit(1)
+        .maybeSingle();
+      const vd: any = data?.vehicle_data ?? {};
+      const ev = (data?.events_data ?? []) as any[];
+      const sh = (data?.shortages_data ?? []) as any[];
+      const iss = (data?.issues_data ?? []) as any[];
+      // Recover actual color from the last paint event if the archive row lacks it
+      const derivedActual = vd.actual_color_id ?? [...ev].reverse().find(e => e.color_used_id)?.color_used_id ?? null;
+      setEvents(ev
+        .map(e => ({ id: e.id, station: e.station, kind: e.kind, color_used_id: e.color_used_id ?? null, recorded_at: e.recorded_at }))
+        .sort((a, b) => (a.recorded_at < b.recorded_at ? -1 : 1)));
+      setShortageHistory(sh
+        .map(s => ({ id: s.id, parts: s.parts ?? [], shortage_reason: s.shortage_reason ?? null, status: s.status, created_at: s.created_at, cleared_at: s.cleared_at ?? null }))
+        .sort((a, b) => (a.created_at < b.created_at ? -1 : 1)));
+      setIssueHistory(iss
+        .map(i => ({ id: i.id, title: i.title, status: i.status, station: i.station, created_at: i.created_at }))
+        .sort((a, b) => (a.created_at < b.created_at ? -1 : 1)));
+      setSelected({ ...v, planned_color_id: vd.planned_color_id ?? null, actual_color_id: derivedActual });
+      return;
+    }
+
     const [evRes, shRes, issRes] = await Promise.all([
       supabase
         .from("station_events")
@@ -177,11 +207,11 @@ function VehicleLookup() {
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">Planned color</div>
-                  <div className="font-mono">{selected.planned_color_id ?? "—"}</div>
+                  <div className="font-mono">{getCode(selected.planned_color_id)}</div>
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">Actual color</div>
-                  <div className="font-mono">{selected.actual_color_id ?? "—"}</div>
+                  <div className="font-mono">{getCode(selected.actual_color_id)}</div>
                 </div>
               </div>
 
