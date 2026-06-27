@@ -37,8 +37,9 @@ const REASON_MAP: Record<string, string> = {
 function formatDateTime(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
-  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }) +
-    ", " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  // Deno runs in UTC — force Cairo so PDF Entry Time matches factory clock.
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Africa/Cairo" }) +
+    ", " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Africa/Cairo" });
 }
 
 function getCategoryForShortage(s: any): string {
@@ -220,7 +221,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const { date, module: mod, period }: { date?: string; module?: string; period?: "day" | "month" } = await req.json().catch(() => ({}));
-    const reportDate = date ?? new Date().toISOString().slice(0, 10);
+    const reportDate = date ?? new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
     const m = mod ?? "pbs";
     const config = MODULE_CONFIG[m] ?? MODULE_CONFIG.pbs;
     const isMonthly = period === "month";
@@ -316,7 +317,7 @@ Deno.serve(async (req: Request) => {
     const dailyBreakdown: Record<string, { in: number; out: number }> = {};
     if (isMonthly) {
       todayEvents.forEach((e: any) => {
-        const day = (typeof e.recorded_at === "string" ? e.recorded_at : new Date(e.recorded_at).toISOString()).slice(0, 10);
+        const day = new Date(e.recorded_at).toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
         if (!dailyBreakdown[day]) dailyBreakdown[day] = { in: 0, out: 0 };
         if (e.kind === "in") dailyBreakdown[day].in++;
         else dailyBreakdown[day].out++;
@@ -439,8 +440,8 @@ Deno.serve(async (req: Request) => {
     doc.setFontSize(8);
     doc.setTextColor(100, 116, 139);
     const now2 = new Date();
-    const ts = now2.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }) +
-      " " + now2.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
+    const ts = now2.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Africa/Cairo" }) +
+      " " + now2.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, timeZone: "Africa/Cairo" });
     doc.text(`Report Generated: ${ts} | Period: ${rangeLabel}`, pageWidth / 2, y, { align: "center" });
     y += 8;
 

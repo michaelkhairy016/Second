@@ -658,7 +658,7 @@ function Page() {
                               <td className="p-2 text-xs">
                                 {r.issue ? <span className="text-foreground">{r.issue}</span> : <span className="text-muted-foreground">—</span>}
                               </td>
-                              <td className="p-2 text-xs text-muted-foreground">{r.enteredAt ? new Date(r.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(r.enteredAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—"}</td>
+                              <td className="p-2 text-xs text-muted-foreground">{r.enteredAt ? new Date(r.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Cairo" }) + " " + new Date(r.enteredAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Cairo" }) : "—"}</td>
                               <td className={`p-2 font-bold ${r.hours > 24 ? "text-destructive" : "text-foreground"}`}>{r.hours.toFixed(1)}h</td>
                               <td className="p-2">{r.workingDays}d</td>
                             </tr>
@@ -861,7 +861,7 @@ function Page() {
                         <tbody className="divide-y">
                           {vehicleTracing.map((r, i) => (
                             <tr key={i}>
-                              <td className="p-2 whitespace-nowrap">{new Date(r.recorded_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(r.recorded_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false })}</td>
+                              <td className="p-2 whitespace-nowrap">{new Date(r.recorded_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Cairo" }) + " " + new Date(r.recorded_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Cairo" })}</td>
                               <td className="p-2 font-mono text-xs">{r.vin}</td>
                               <td className="p-2">{r.model}</td>
                               <td className="p-2 text-xs">{r.issue ? <Badge variant="destructive" className="text-[10px]">{r.issue}</Badge> : (d === "shortages" ? <span className="text-muted-foreground">—</span> : <Badge variant="success" className="text-[10px]">OK</Badge>)}</td>
@@ -909,7 +909,7 @@ function Page() {
                       <td className="p-2">{r.model}</td>
                       <td className="p-2"><Badge variant="secondary" className="text-[10px]">{r.category || (activeDept === "shortages" ? "—" : "OK")}</Badge></td>
                       <td className="p-2 text-xs">{r.issue ? <Badge variant="destructive" className="text-[10px]">{r.issue}</Badge> : (activeDept === "shortages" ? <span className="text-muted-foreground">—</span> : <Badge variant="success" className="text-[10px]">OK</Badge>)}</td>
-                      <td className="p-2 text-xs text-muted-foreground">{r.enteredAt ? new Date(r.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(r.enteredAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—"}</td>
+                      <td className="p-2 text-xs text-muted-foreground">{r.enteredAt ? new Date(r.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Cairo" }) + " " + new Date(r.enteredAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Cairo" }) : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1264,7 +1264,7 @@ function DelayedSection({ delayThreshold, setDelayThreshold, delayedWip }: { del
                         <td className="p-2">{r.model}</td>
                         <td className="p-2"><Badge variant="secondary" className="text-[10px]">{r.category}</Badge></td>
                         <td className="p-2 text-xs">{r.issue ? <span className="text-foreground">{r.issue}</span> : <span className="text-muted-foreground">—</span>}</td>
-                        <td className="p-2 text-xs text-muted-foreground">{r.enteredAt ? new Date(r.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + " " + new Date(r.enteredAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—"}</td>
+                        <td className="p-2 text-xs text-muted-foreground">{r.enteredAt ? new Date(r.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Cairo" }) + " " + new Date(r.enteredAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Cairo" }) : "—"}</td>
                         <td className="p-2 font-bold text-destructive">{r.hours.toFixed(1)}h</td>
                         <td className="p-2">{r.workingDays}d</td>
                       </tr>
