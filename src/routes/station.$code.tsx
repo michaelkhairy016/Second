@@ -1391,7 +1391,7 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
               <div className="space-y-1.5"><Label>Missing parts (comma-separated)</Label><Input value={parts} onChange={e => setParts(e.target.value)} placeholder="exhaust pipe, rear wiper / قطعة غيار" /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5"><Label>Shortage Reason</Label>
-                  <select value={shortageReason} onChange={e => { setShortageReason(e.target.value); setPartType(e.target.value === "plastics" || e.target.value === "missing_plastics" ? "plastics" : e.target.value === "local" || e.target.value === "general_missing" || e.target.value === "unavailable_factory" ? "local" : "ckd"); }} className="w-full border rounded-md px-2 py-1.5 text-sm bg-background">
+                  <select value={shortageReason} onChange={e => { setShortageReason(e.target.value); setPartType(e.target.value === "plastics" || e.target.value === "missing_plastics" ? "plastics" : e.target.value === "local" || e.target.value === "general_missing" || e.target.value === "unavailable_factory" || e.target.value === "damage" ? "local" : "ckd"); }} className="w-full border rounded-md px-2 py-1.5 text-sm bg-background">
                     <option value="ckd">CKD</option>
                     <option value="local">Local</option>
                     <option value="unavailable_factory">Unavailable in Factory</option>
@@ -1399,6 +1399,7 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
                     <option value="missing_paint_miscolored">Scratches (Paint Shop)</option>
                     <option value="general_missing">General Missing</option>
                     <option value="plastics">Plastics</option>
+                    <option value="damage">Damage</option>
                   </select>
                 </div>
                 <div className="space-y-1.5"><Label>Responsibility</Label><div className="flex gap-2"><button type="button" onClick={() => setResponsibility("afa")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "afa" ? "bg-warning/20 border-warning text-warning" : "bg-muted border-border"}`}>Against AFA</button><button type="button" onClick={() => setResponsibility("supplier")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "supplier" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>Against Supplier</button></div></div>
@@ -1421,7 +1422,7 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
                   <div className="space-y-1.5"><Label>Updated parts list (comma-separated)</Label><Input value={parts} onChange={e => setParts(e.target.value)} placeholder="exhaust pipe, rear wiper / قطعة غيار" /></div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5"><Label>Shortage Reason</Label>
-                      <select value={shortageReason} onChange={e => { setShortageReason(e.target.value); setPartType(e.target.value === "plastics" || e.target.value === "missing_plastics" ? "plastics" : e.target.value === "local" || e.target.value === "general_missing" || e.target.value === "unavailable_factory" ? "local" : "ckd"); }} className="w-full border rounded-md px-2 py-1.5 text-sm bg-background">
+                      <select value={shortageReason} onChange={e => { setShortageReason(e.target.value); setPartType(e.target.value === "plastics" || e.target.value === "missing_plastics" ? "plastics" : e.target.value === "local" || e.target.value === "general_missing" || e.target.value === "unavailable_factory" || e.target.value === "damage" ? "local" : "ckd"); }} className="w-full border rounded-md px-2 py-1.5 text-sm bg-background">
                         <option value="ckd">CKD</option>
                         <option value="local">Local</option>
                         <option value="unavailable_factory">Unavailable in Factory</option>
@@ -1429,6 +1430,7 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
                         <option value="missing_paint_miscolored">Scratches (Paint Shop)</option>
                         <option value="general_missing">General Missing</option>
                         <option value="plastics">Plastics</option>
+                        <option value="damage">Damage</option>
                       </select>
                     </div>
                     <div className="space-y-1.5"><Label>Responsibility</Label><div className="flex gap-2"><button type="button" onClick={() => setResponsibility("afa")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "afa" ? "bg-warning/20 border-warning text-warning" : "bg-muted border-border"}`}>Against AFA</button><button type="button" onClick={() => setResponsibility("supplier")} className={`flex-1 py-2 rounded-md border text-xs font-medium ${responsibility === "supplier" ? "bg-info/20 border-info text-info" : "bg-muted border-border"}`}>Against Supplier</button></div></div>

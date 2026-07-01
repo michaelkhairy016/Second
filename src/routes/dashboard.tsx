@@ -13,10 +13,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { LayoutDashboard, Download, Search, Loader2, CalendarDays, ChevronDown, ChevronRight } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell as RechartsCell, CartesianGrid } from "recharts";
+import { LayoutDashboard, Download, Search, Loader2, CalendarDays, ChevronDown, ChevronRight, FileSpreadsheet } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell as RechartsCell, CartesianGrid, LineChart, Line } from "recharts";
 import { toast } from "sonner";
 import { STATIONS, stationByCode } from "@/lib/stations";
+import { exportToCSV } from "@/lib/export";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — AFA Shopfloor" }] }),
@@ -32,11 +33,11 @@ type VehicleRow = { id: string; current_station: string | null; lot_id: string |
 type LotRow = { id: string; model: string };
 type IssueRow = { id: string; vehicle_id: string | null; status: string; title: string };
 
-const DEPARTMENTS = ["overview", "shortages", "pbs", "wbs", "delayed"] as const;
+const DEPARTMENTS = ["overview", "shortages", "pbs", "wbs", "delayed", "reports", "trends"] as const;
 type Dept = typeof DEPARTMENTS[number];
 
-const DEPT_STATION: Record<string, string> = { overview: "", shortages: "shortage", pbs: "pbs", wbs: "wbs", delayed: "" };
-const DEPT_LABEL: Record<string, string> = { overview: "Overview", shortages: "Shortages", pbs: "PBS", wbs: "WBS", delayed: "Delayed" };
+const DEPT_STATION: Record<string, string> = { overview: "", shortages: "shortage", pbs: "pbs", wbs: "wbs", delayed: "", reports: "", trends: "" };
+const DEPT_LABEL: Record<string, string> = { overview: "Overview", shortages: "Shortages", pbs: "PBS", wbs: "WBS", delayed: "Delayed", reports: "Reports", trends: "Trends" };
 
 const SHORTAGE_CATEGORIES = ["PLASTICS PART", "Local", "CKD", "Scratches"] as const;
 const PBS_CATEGORIES = ["No Issue", "CKD", "Local", "Dismantled"] as const;
@@ -55,10 +56,11 @@ function mapShortageCategory(s: { shortage_reason: string | null; part_type?: st
 
 function Page() {
   const { isSuperuser, isStaff, isStatus, dashboardAllowed } = useAuth();
-  if (!isSuperuser && !isStaff && !isStatus) return <p className="text-muted-foreground p-8">Access restricted.</p>;
+  if (!isSuperuser && !isStaff && !isStatus && !dashboardAllowed) return <p className="text-muted-foreground p-8">Access restricted.</p>;
   if (!dashboardAllowed) return <p className="text-muted-foreground p-8">Dashboard access disabled for your account.</p>;
 
   const [selectedDate, setSelectedDate] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; });
+  const [selectedMonth, setSelectedMonth] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; });
   const [delayThreshold, setDelayThreshold] = useState(24);
   const [activeDept, setActiveDept] = useState<Dept>("shortages");
   const [vinSearch, setVinSearch] = useState("");
@@ -66,6 +68,8 @@ function Page() {
   const [calOpen, setCalOpen] = useState(false);
   const [live, setLive] = useState(true);
   const [reportBusy, setReportBusy] = useState(false);
+  const [csvBusy, setCsvBusy] = useState(false);
+  const [monthCalOpen, setMonthCalOpen] = useState(false);
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
   const [cellDialog, setCellDialog] = useState<{ title: string; rows: { vin: string; model: string; station: string | null; issue: string; category?: string; enteredAt?: string | null }[] } | null>(null);
 
@@ -503,6 +507,10 @@ function Page() {
   }, [wipVehicles, dayEvents, monthDayEvents, activeDept, vehicleIssues, vehicleShortageCategory, vModel, lotMap, allVehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday, monthlyShortages, stationEntryMap]);
 
   const downloadReport = async (period: "day" | "month" = "day") => {
+    await fetchReport(activeDept === "shortages" ? "shortage" : activeDept, selectedDate, period, `${activeDept}-${period === "month" ? "monthly" : "daily"}-report-${selectedDate}.pdf`);
+  };
+
+  const fetchReport = async (module: string, date: string, period: "day" | "month", filename: string) => {
     setReportBusy(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -516,7 +524,7 @@ function Page() {
           "Authorization": `Bearer ${session?.access_token ?? ""}`,
           "apikey": supabaseKey,
         },
-        body: JSON.stringify({ date: selectedDate, module: activeDept === "shortages" ? "shortage" : activeDept, period }),
+        body: JSON.stringify({ date, module, period }),
       });
       if (!res.ok) {
         let errMsg = `Server error ${res.status}`;
@@ -528,7 +536,7 @@ function Page() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${activeDept}-${period === "month" ? "monthly" : "daily"}-report-${selectedDate}.pdf`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -538,6 +546,63 @@ function Page() {
       toast.error(e.message || "Failed to download report");
     } finally {
       setReportBusy(false);
+    }
+  };
+
+  const downloadShortagesCSV = async () => {
+    setCsvBusy(true);
+    try {
+      const monthFirstDay = selectedMonth + "-01";
+      const [y, m] = selectedMonth.split("-").map(Number);
+      const lastDay = new Date(y, m, 0).getDate();
+      const monthLastDay = `${selectedMonth}-${String(lastDay).padStart(2, "0")}T23:59:59`;
+
+      const { data: shortagesData, error } = await supabase
+        .from("shortages")
+        .select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, contract_model, lot:lots(model))")
+        .or(`and(created_at.gte.${monthFirstDay}T00:00:00,created_at.lte.${monthLastDay}),and(cleared_at.gte.${monthFirstDay}T00:00:00,cleared_at.lte.${monthLastDay})`);
+
+      if (error) throw error;
+
+      if (!shortagesData || shortagesData.length === 0) {
+        toast.error("No shortages found for this month");
+        return;
+      }
+
+      const REASON_MAP: Record<string, string> = {
+        ckd: "CKD",
+        local: "Local",
+        plastics: "PLASTICS PART",
+        missing_plastics: "PLASTICS PART",
+        missing_paint_miscolored: "Scratches",
+        unavailable_factory: "Scratches",
+        damage: "Damage",
+      };
+
+      const rows = shortagesData.map((s: any) => {
+        const rawReason = s.shortage_reason || "";
+        let category = REASON_MAP[rawReason] || REASON_MAP[s.part_type] || s.part_type || "Local";
+        if (rawReason.includes("scratch") && category === "Local") category = "Scratches";
+
+        return {
+          VIN: s.vehicle?.vin || "",
+          Model: s.vehicle?.contract_model || s.vehicle?.lot?.model || "",
+          Parts: (s.parts || []).join("; "),
+          Category: category,
+          Reason: s.shortage_reason || "",
+          Status: s.status,
+          Opened: s.created_at || "",
+          Cleared: s.cleared_at || "",
+          Notes: "",
+        };
+      });
+
+      exportToCSV(rows, `shortages-${selectedMonth}`);
+      toast.success("CSV downloaded");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to download CSV");
+    } finally {
+      setCsvBusy(false);
     }
   };
 
@@ -591,6 +656,11 @@ function Page() {
           <Button size="sm" onClick={() => downloadReport("month")} disabled={reportBusy} className="gap-2 bg-indigo-600 hover:bg-indigo-700">
             {reportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Monthly Report
           </Button>
+          {activeDept === "shortages" && (
+            <Button size="sm" onClick={downloadShortagesCSV} disabled={csvBusy} variant="outline" className="gap-2">
+              {csvBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} Export Shortages CSV
+            </Button>
+          )}
         </div>
       </div>
 
@@ -616,6 +686,10 @@ function Page() {
               />
             ) : d === "delayed" ? (
               <DelayedSection delayThreshold={delayThreshold} setDelayThreshold={setDelayThreshold} delayedWip={delayedWip} />
+            ) : d === "reports" ? (
+              <ReportsSection selectedMonth={selectedMonth} setSelectedMonth={setSelectedMonth} monthCalOpen={monthCalOpen} setMonthCalOpen={setMonthCalOpen} onDownloadReport={fetchReport} reportBusy={reportBusy} />
+            ) : d === "trends" ? (
+              <TrendsSection />
             ) : (
               <>
                 {/* Stat Boxes */}
@@ -1361,5 +1435,241 @@ function WipTable({ cats, data, onCellClick }: { cats: readonly string[]; data: 
         </tr>
       </tbody>
     </table>
+  );
+}
+
+type ReportsSectionProps = {
+  selectedMonth: string;
+  setSelectedMonth: (v: string) => void;
+  monthCalOpen: boolean;
+  setMonthCalOpen: (v: boolean) => void;
+  onDownloadReport: (module: string, date: string, period: "day" | "month", filename: string) => Promise<void>;
+  reportBusy: boolean;
+};
+
+function ReportsSection({ selectedMonth, setSelectedMonth, monthCalOpen, setMonthCalOpen, onDownloadReport, reportBusy }: ReportsSectionProps) {
+  const handleDownload = (module: string, label: string) => {
+    const firstDay = selectedMonth + "-01";
+    onDownloadReport(module, firstDay, "month", `${module}-monthly-report-${selectedMonth}.pdf`);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-card p-6 rounded-lg border shadow-sm">
+        <h2 className="text-xl font-bold mb-4">Monthly Reports</h2>
+        <div className="flex items-center gap-4 flex-wrap mb-6">
+          <label className="text-sm font-medium">Select Month:</label>
+          <Popover open={monthCalOpen} onOpenChange={setMonthCalOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-2 w-36 justify-start text-sm font-normal">
+                <CalendarDays className="h-4 w-4" />
+                {selectedMonth}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar
+                mode="single"
+                selected={new Date(selectedMonth + "-01")}
+                onSelect={d => { if (d) { setSelectedMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`); setMonthCalOpen(false); } }}
+                disabled={d => d > new Date()}
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Button size="lg" onClick={() => handleDownload("wbs", "WBS")} disabled={reportBusy} className="gap-2 h-20 bg-blue-600 hover:bg-blue-700">
+            <Download className="h-6 w-6" />
+            <span className="font-semibold">WBS Report</span>
+          </Button>
+          <Button size="lg" onClick={() => handleDownload("pbs", "PBS")} disabled={reportBusy} className="gap-2 h-20 bg-green-600 hover:bg-green-700">
+            <Download className="h-6 w-6" />
+            <span className="font-semibold">PBS Report</span>
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mt-4">Reports include daily summary tables and category breakdowns for the selected month.</p>
+      </div>
+    </div>
+  );
+}
+
+const TREND_STATIONS = [
+  { code: "wbs", label: "WBS" },
+  { code: "paint", label: "Paint" },
+  { code: "pbs", label: "PBS" },
+  { code: "shortage", label: "Shortage" },
+  { code: "tcf", label: "TCF" },
+];
+
+function TrendsSection() {
+  const [monthsBack, setMonthsBack] = useState(6);
+  const [station, setStation] = useState<string>("all");
+  const [mom, setMom] = useState<{ month: string; ins: number; outs: number }[]>([]);
+  const [plan, setPlan] = useState<{ model: string; monthly_plan: number; actual: number }[]>([]);
+  const [colors, setColors] = useState<{ code: string; planned: number; actual: number }[]>([]);
+  const [jph, setJph] = useState<{ station: string; jph: number; outs: number }[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const stationCodes = station === "all" ? null : [station];
+
+        // 1. Month-over-month flow
+        const { data: flow } = await supabase.rpc("get_monthly_flow", { months_back: monthsBack, station_codes: stationCodes });
+        const byMonth: Record<string, { ins: number; outs: number }> = {};
+        (flow ?? []).forEach((r: any) => {
+          if (!byMonth[r.month]) byMonth[r.month] = { ins: 0, outs: 0 };
+          byMonth[r.month].ins += Number(r.ins);
+          byMonth[r.month].outs += Number(r.outs);
+        });
+        const momData = Object.entries(byMonth).map(([month, v]) => ({ month, ins: v.ins, outs: v.outs })).sort((a, b) => a.month.localeCompare(b.month));
+        if (!cancel) setMom(momData);
+
+        // Shared lookups
+        const [{ data: plansRes }, { data: vehiclesRes }, { data: scRes }] = await Promise.all([
+          supabase.from("production_plans").select("month, monthly_plan, model:models(name)"),
+          supabase.from("vehicles").select("planned_color_id, actual_color_id, contract_model, completed_at"),
+          supabase.from("standard_colors").select("id, code"),
+        ]);
+        const colorName: Record<string, string> = {};
+        (scRes ?? []).forEach((c: any) => { colorName[c.id] = c.code; });
+
+        // 2. Actual vs plan — latest plan month present
+        const planRows = (plansRes ?? []) as any[];
+        const latestMonth = planRows.map(p => p.month).sort().reverse()[0];
+        if (latestMonth) {
+          const rowsForMonth = planRows.filter(p => p.month === latestMonth);
+          const completedThatMonth = (vehiclesRes ?? []).filter((v: any) => v.completed_at && String(v.completed_at).slice(0, 7) === latestMonth.slice(0, 7));
+          const actualByModel: Record<string, number> = {};
+          completedThatMonth.forEach((v: any) => { const m = v.contract_model || "Unknown"; actualByModel[m] = (actualByModel[m] ?? 0) + 1; });
+          const planData = rowsForMonth.map((p: any) => {
+            const name = p.model?.name ?? "Unknown";
+            return { model: name, monthly_plan: p.monthly_plan ?? 0, actual: actualByModel[name] ?? 0 };
+          });
+          if (!cancel) setPlan(planData);
+        } else if (!cancel) setPlan([]);
+
+        // 3. Color variance
+        const plannedC: Record<string, number> = {}; const actualC: Record<string, number> = {};
+        (vehiclesRes ?? []).forEach((v: any) => {
+          if (v.planned_color_id) plannedC[v.planned_color_id] = (plannedC[v.planned_color_id] ?? 0) + 1;
+          if (v.actual_color_id) actualC[v.actual_color_id] = (actualC[v.actual_color_id] ?? 0) + 1;
+        });
+        const colorIds = Array.from(new Set([...Object.keys(plannedC), ...Object.keys(actualC)]));
+        const colorData = colorIds.map(id => ({ code: colorName[id] || id.slice(0, 6), planned: plannedC[id] ?? 0, actual: actualC[id] ?? 0 })).sort((a, b) => (b.planned + b.actual) - (a.planned + a.actual));
+        if (!cancel) setColors(colorData);
+
+        // 4. JPH per station (current month)
+        const now = new Date();
+        const curMonthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01T00:00:00`;
+        const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        const curMonthEnd = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01T00:00:00`;
+        const [{ data: calRes }, { data: evRes }] = await Promise.all([
+          supabase.from("factory_calendar").select("working_hours").gte("date", curMonthStart.slice(0, 10)).lt("date", curMonthEnd.slice(0, 10)),
+          supabase.rpc("get_production_events", { p_from: curMonthStart, p_to: curMonthEnd }),
+        ]);
+        const workingHours = (calRes ?? []).reduce((s: number, r: any) => s + (Number(r.working_hours) || 0), 0) || 1;
+        const outsByStation: Record<string, number> = {};
+        (evRes ?? []).forEach((e: any) => { if (e.kind === "out") outsByStation[e.station] = (outsByStation[e.station] ?? 0) + 1; });
+        const jphData = TREND_STATIONS.map(s => {
+          const outs = outsByStation[s.code] ?? 0;
+          return { station: s.label, outs, jph: Math.round((outs / workingHours) * 10) / 10 };
+        }).filter(x => x.outs > 0);
+        if (!cancel) setJph(jphData);
+      } finally {
+        if (!cancel) setLoading(false);
+      }
+    })();
+    return () => { cancel = true; };
+  }, [monthsBack, station]);
+
+  if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4 flex-wrap">
+        <label className="text-sm font-medium">Station:</label>
+        <select value={station} onChange={e => setStation(e.target.value)} className="border rounded-md px-2 py-1 text-sm bg-background">
+          <option value="all">All Stations</option>
+          {TREND_STATIONS.map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
+        </select>
+        <label className="text-sm font-medium ml-4">Months:</label>
+        <select value={monthsBack} onChange={e => setMonthsBack(Number(e.target.value))} className="border rounded-md px-2 py-1 text-sm bg-background">
+          {[3, 6, 12].map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </div>
+
+      <div className="bg-card p-6 rounded-lg border shadow-sm">
+        <h2 className="text-xl font-bold mb-1">Month-over-Month: Entries vs Exits</h2>
+        <p className="text-xs text-muted-foreground mb-4">In/out counts per month {station === "all" ? "(all stations)" : `(${station})`}.</p>
+        <ResponsiveContainer width="100%" height={280}>
+          <LineChart data={mom} margin={{ top: 10, right: 20, bottom: 5, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+            <XAxis dataKey="month" stroke="currentColor" fontSize={12} />
+            <YAxis stroke="currentColor" fontSize={12} allowDecimals={false} />
+            <Tooltip />
+            <Legend />
+            <Line type="monotone" dataKey="ins" name="Entries" stroke="#3b82f6" strokeWidth={2} dot />
+            <Line type="monotone" dataKey="outs" name="Exits" stroke="#10b981" strokeWidth={2} dot />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-card p-6 rounded-lg border shadow-sm">
+          <h2 className="text-xl font-bold mb-1">Actual vs Plan</h2>
+          <p className="text-xs text-muted-foreground mb-4">Latest plan month only — add production_plans rows for other months to extend.</p>
+          {plan.length === 0 ? <p className="text-sm text-muted-foreground">No plan data.</p> : (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={plan} margin={{ top: 10, right: 20, bottom: 5, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+                <XAxis dataKey="model" stroke="currentColor" fontSize={10} interval={0} angle={-15} textAnchor="end" height={50} />
+                <YAxis stroke="currentColor" fontSize={12} allowDecimals={false} />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="monthly_plan" name="Plan" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="actual" name="Actual" fill="#10b981" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div className="bg-card p-6 rounded-lg border shadow-sm">
+          <h2 className="text-xl font-bold mb-1">Color Variance (Planned vs Actual)</h2>
+          <p className="text-xs text-muted-foreground mb-4">All-time count per color code.</p>
+          {colors.length === 0 ? <p className="text-sm text-muted-foreground">No color data.</p> : (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={colors} margin={{ top: 10, right: 20, bottom: 5, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+                <XAxis dataKey="code" stroke="currentColor" fontSize={12} />
+                <YAxis stroke="currentColor" fontSize={12} allowDecimals={false} />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="planned" name="Planned" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="actual" name="Actual" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-card p-6 rounded-lg border shadow-sm">
+        <h2 className="text-xl font-bold mb-1">JPH per Station (Current Month)</h2>
+        <p className="text-xs text-muted-foreground mb-4">Exits / working hours (factory_calendar) this month.</p>
+        {jph.length === 0 ? <p className="text-sm text-muted-foreground">No exits yet this month.</p> : (
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={jph} margin={{ top: 10, right: 20, bottom: 5, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+              <XAxis dataKey="station" stroke="currentColor" fontSize={12} />
+              <YAxis stroke="currentColor" fontSize={12} allowDecimals={false} />
+              <Tooltip />
+              <Bar dataKey="jph" name="JPH" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </div>
   );
 }

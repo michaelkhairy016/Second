@@ -14,7 +14,7 @@ import {
   SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
   SidebarProvider, SidebarRail, SidebarSeparator, SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { displayName, roles, signOut, isSuperuser, isStaff, isStatus, dashboardAllowed } = useAuth();
@@ -24,6 +24,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { theme, toggleTheme } = useTheme();
 
   useNotifications();
+
+  // Dashboard-only viewers: any non-superuser with dashboard_allowed sees ONLY the
+  // Dashboard tab and is bounced off every other route.
+  const dashboardOnly = !isSuperuser && dashboardAllowed;
+  useEffect(() => {
+    if (dashboardOnly && loc.pathname !== "/dashboard") {
+      nav({ to: "/dashboard" });
+    }
+  }, [dashboardOnly, loc.pathname, nav]);
 
   if (roles.length === 0) {
     return (
@@ -89,7 +98,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
-                {navItems.filter(n => n.show).map(item => {
+                {navItems.filter(n => (dashboardOnly ? n.to === "/dashboard" : n.show)).map(item => {
                   const active = loc.pathname === item.to || (item.to !== "/" && loc.pathname.startsWith(item.to));
                   return (
                     <SidebarMenuItem key={item.to}>

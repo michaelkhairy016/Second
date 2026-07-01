@@ -21,7 +21,7 @@ interface WipVehicle {
 const MODULE_CONFIG: Record<string, { title: string; stations: string[]; color: number[] }> = {
   shortage: { title: "Shortages WIP Status Report", stations: ["shortage"], color: [211, 84, 0] },
   pbs: { title: "PBS WIP Status Report", stations: ["pbs"], color: [39, 174, 96] },
-  wbs: { title: "WBS + Paint WIP Status Report", stations: ["wbs", "paint", "body_shop", "line_feeding"], color: [41, 128, 185] },
+  wbs: { title: "WBS WIP Status Report", stations: ["wbs"], color: [41, 128, 185] },
 };
 
 const REASON_MAP: Record<string, string> = {
@@ -32,6 +32,7 @@ const REASON_MAP: Record<string, string> = {
   missing_paint_miscolored: "Scratches",
   unavailable_factory: "Scratches",
   general_missing: "Local",
+  damage: "Damage",
 };
 
 function formatDateTime(iso: string | null): string {
@@ -40,6 +41,12 @@ function formatDateTime(iso: string | null): string {
   // Deno runs in UTC — force Cairo so PDF Entry Time matches factory clock.
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Africa/Cairo" }) +
     ", " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Africa/Cairo" });
+}
+
+function formatDateOnly(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Africa/Cairo" });
 }
 
 function getCategoryForShortage(s: any): string {
@@ -174,13 +181,60 @@ function drawArc(doc: any, cx: number, cy: number, r: number, a1: number, a2: nu
     const a = a1 + (i / steps) * (a2 - a1);
     abs.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
   }
-  // jsPDF.lines: x,y = start point; lines[] = relative [dx,dy] shifts; style 'S' strokes.
   const shifts: number[][] = abs.slice(1).map((p, i) => [p[0] - abs[i][0], p[1] - abs[i][1]]);
   doc.setDrawColor(color[0], color[1], color[2]);
   doc.setLineWidth(lineWidth);
-  try { doc.setLineCap("round"); } catch (e) { /* older jsPDF */ }
+  try { doc.setLineCap("round"); } catch (e) { }
   if (shifts.length >= 1) doc.lines(shifts, abs[0][0], abs[0][1], [1, 1], "S", false);
-  try { doc.setLineCap("butt"); } catch (e) { /* reset */ }
+  try { doc.setLineCap("butt"); } catch (e) { }
+}
+
+function drawLineChart(doc: any, x: number, y: number, w: number, h: number, data: { day: string; in: number; out: number }[]) {
+  if (data.length === 0) return;
+  const maxVal = Math.max(...data.map(d => Math.max(d.in, d.out)), 1);
+  const padding = { t: 5, r: 5, b: 15, l: 25 };
+  const plotW = w - padding.l - padding.r;
+  const plotH = h - padding.t - padding.b;
+  const stepX = plotW / (data.length - 1 || 1);
+
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.3);
+  doc.line(x + padding.l, y + padding.t, x + padding.l, y + h - padding.b);
+  doc.line(x + padding.l, y + h - padding.b, x + w - padding.r, y + h - padding.b);
+
+  doc.setFontSize(6);
+  doc.setTextColor(100, 116, 139);
+  data.forEach((d, i) => {
+    if (i % Math.ceil(data.length / 6) === 0) {
+      const dx = x + padding.l + i * stepX;
+      doc.text(d.day.slice(5), dx, y + h - padding.b + 3, { align: "center" });
+    }
+  });
+
+  const yVal = (v: number) => y + h - padding.b - (v / maxVal) * plotH;
+
+  doc.setDrawColor(59, 130, 246);
+  doc.setLineWidth(0.8);
+  try { doc.setLineCap("round"); } catch (e) { }
+  const inPts: number[][] = data.map((d, i) => [x + padding.l + i * stepX, yVal(d.in)]);
+  if (inPts.length >= 2) {
+    const inShifts = inPts.slice(1).map((p, i) => [p[0] - inPts[i][0], p[1] - inPts[i][1]]);
+    doc.lines(inShifts, inPts[0][0], inPts[0][1], [1, 1], "S", false);
+  }
+
+  doc.setDrawColor(16, 185, 129);
+  const outPts: number[][] = data.map((d, i) => [x + padding.l + i * stepX, yVal(d.out)]);
+  if (outPts.length >= 2) {
+    const outShifts = outPts.slice(1).map((p, i) => [p[0] - outPts[i][0], p[1] - outPts[i][1]]);
+    doc.lines(outShifts, outPts[0][0], outPts[0][1], [1, 1], "S", false);
+  }
+  try { doc.setLineCap("butt"); } catch (e) { }
+
+  doc.setFontSize(6);
+  doc.setTextColor(59, 130, 246);
+  doc.text("In", x + w - padding.r - 10, y + padding.t, { align: "right" });
+  doc.setTextColor(16, 185, 129);
+  doc.text("Out", x + w - padding.r, y + padding.t, { align: "right" });
 }
 
 function drawGauge(doc: any, cx: number, cy: number, r: number, pct: number, label: string, valueText: string, color: number[]) {
@@ -242,100 +296,164 @@ Deno.serve(async (req: Request) => {
       ? `${reportDate.slice(0, 7)} (Monthly)`
       : reportDate;
 
-    // 1. Fetch WIP vehicles at relevant stations
-    const { data: wipData } = await sb
-      .from("vehicles")
-      .select("id, vin, vin_suffix, current_station, actual_color_id, lot_id, job_order_id, contract_model")
-      .in("current_station", config.stations)
-      .is("completed_at", null);
-    const wipVehicles: WipVehicle[] = (wipData ?? []).map((v: any) => ({ ...v, lot_model: "", entry_time: null }));
-
-    // 2. Lot model map
+    // === SHARED LOOKUPS ===
     const { data: lotsData } = await sb.from("lots").select("id, model");
     const lotMap: Record<string, string> = {};
     (lotsData ?? []).forEach((l: any) => { lotMap[l.id] = l.model; });
 
-    // 2b. Job order → model fallback
     const { data: jolData } = await sb.from("job_order_lots").select("job_order_id, lot_id");
     const joModelMap: Record<string, string> = {};
     (jolData ?? []).forEach((jol: any) => {
-      if (!joModelMap[jol.job_order_id] && lotMap[jol.lot_id]) {
-        joModelMap[jol.job_order_id] = lotMap[jol.lot_id];
-      }
+      if (!joModelMap[jol.job_order_id] && lotMap[jol.lot_id]) joModelMap[jol.job_order_id] = lotMap[jol.lot_id];
     });
 
-    // 3. Color code map
     const { data: colorsData } = await sb.from("standard_colors").select("id, code");
     const colorMap: Record<string, string> = {};
     (colorsData ?? []).forEach((c: any) => { colorMap[c.id] = c.code; });
 
-    // 4. Assign models to WIP vehicles
-    const vehicleIds = wipVehicles.map(v => v.id);
-    wipVehicles.forEach((v: any) => {
-      if (v.lot_id && lotMap[v.lot_id]) v.lot_model = lotMap[v.lot_id];
-      else if (v.job_order_id && joModelMap[v.job_order_id]) v.lot_model = joModelMap[v.job_order_id];
-      else if (v.contract_model) v.lot_model = v.contract_model;
-    });
-
-    // 5. Entry times
-    if (vehicleIds.length > 0) {
-      const { data: entryEvents } = await sb
-        .from("station_events")
-        .select("vehicle_id, recorded_at, station, kind")
-        .in("vehicle_id", vehicleIds)
-        .eq("kind", "in")
-        .order("recorded_at", { ascending: true });
-      const entryMap = new Map<string, string>();
-      (entryEvents ?? []).forEach((e: any) => {
-        if (!entryMap.has(e.vehicle_id)) entryMap.set(e.vehicle_id, e.recorded_at);
-      });
-      wipVehicles.forEach(v => { v.entry_time = entryMap.get(v.id) ?? null; });
-    }
-
-    // 6. Open issues for WIP vehicles
-    let issueMap: Record<string, string[]> = {};
-    if (vehicleIds.length > 0) {
-      const { data: issuesData } = await sb
-        .from("issues")
-        .select("vehicle_id, title")
-        .in("vehicle_id", vehicleIds)
-        .in("status", ["open", "in_progress"]);
-      (issuesData ?? []).forEach((i: any) => {
-        if (!issueMap[i.vehicle_id]) issueMap[i.vehicle_id] = [];
-        issueMap[i.vehicle_id].push(i.title);
-      });
-    }
-
-    // 7. Events for KPI (day or month range) — uses unified RPC so archived
-    // vehicles (hard-deleted from vehicles/station_events) are still counted.
-    const { data: rpcEvents } = await sb.rpc("get_production_events", { p_from: rangeStart, p_to: rangeEnd });
-    const todayEvents = (rpcEvents ?? []) as any[];
-    const carsIn = todayEvents.filter((e: any) => e.kind === "in" && config.stations.includes(e.station)).length;
-    const carsOut = todayEvents.filter((e: any) => e.kind === "out" && config.stations.includes(e.station)).length;
-
-    // For monthly: build daily breakdown
-    const dailyBreakdown: Record<string, { in: number; out: number }> = {};
-    if (isMonthly) {
-      todayEvents.forEach((e: any) => {
-        const day = new Date(e.recorded_at).toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
-        if (!dailyBreakdown[day]) dailyBreakdown[day] = { in: 0, out: 0 };
-        if (e.kind === "in") dailyBreakdown[day].in++;
-        else dailyBreakdown[day].out++;
-      });
-    }
-
-    // 8. Delayed WIP
-    const now = new Date();
-    const delayedWip = wipVehicles.filter(v => {
-      if (!v.entry_time) return false;
-      const hours = (now.getTime() - new Date(v.entry_time).getTime()) / 3600000;
-      return hours > 24;
-    }).length;
-
-    // 9. Categorize vehicles
+    // === BRANCH: DAY vs MONTHLY data assembly ===
+    let wipVehicles: WipVehicle[] = [];
     let categories: { name: string; vehicles: typeof wipVehicles }[] = [];
+    let issueMap: Record<string, string[]> = {};
+    let shortageMap: Record<string, any[]> = {};
+    let carsIn = 0, carsOut = 0;
+    let delayedCount = 0;
+    let avgStayHours = 0;
+    let dailyBreakdown: Record<string, { in: number; out: number }> = {};
+    let monthlyStays: { vin: string; model: string; station: string; entered: string; exited: string | null; working_hours: number; working_days: number; status: string; details: string }[] = [];
+    let issuePct: { category: string; count: number; pct: number }[] = [];
 
-    if (m === "shortage") {
+    if (!isMonthly) {
+      // === DAY PATH: snapshot (existing logic, unchanged) ===
+      const { data: wipData } = await sb
+        .from("vehicles")
+        .select("id, vin, vin_suffix, current_station, actual_color_id, lot_id, job_order_id, contract_model")
+        .in("current_station", config.stations)
+        .is("completed_at", null);
+      wipVehicles = (wipData ?? []).map((v: any) => ({ ...v, lot_model: "", entry_time: null }));
+
+      const vehicleIds = wipVehicles.map(v => v.id);
+      wipVehicles.forEach((v: any) => {
+        if (v.lot_id && lotMap[v.lot_id]) v.lot_model = lotMap[v.lot_id];
+        else if (v.job_order_id && joModelMap[v.job_order_id]) v.lot_model = joModelMap[v.job_order_id];
+        else if (v.contract_model) v.lot_model = v.contract_model;
+      });
+
+      if (vehicleIds.length > 0) {
+        const { data: entryEvents } = await sb
+          .from("station_events")
+          .select("vehicle_id, recorded_at, station, kind")
+          .in("vehicle_id", vehicleIds)
+          .eq("kind", "in")
+          .order("recorded_at", { ascending: true });
+        const entryMap = new Map<string, string>();
+        (entryEvents ?? []).forEach((e: any) => {
+          if (!entryMap.has(e.vehicle_id)) entryMap.set(e.vehicle_id, e.recorded_at);
+        });
+        wipVehicles.forEach(v => { v.entry_time = entryMap.get(v.id) ?? null; });
+      }
+
+      if (vehicleIds.length > 0) {
+        const { data: issuesData } = await sb
+          .from("issues")
+          .select("vehicle_id, title")
+          .in("vehicle_id", vehicleIds)
+          .in("status", ["open", "in_progress"]);
+        (issuesData ?? []).forEach((i: any) => {
+          if (!issueMap[i.vehicle_id]) issueMap[i.vehicle_id] = [];
+          issueMap[i.vehicle_id].push(i.title);
+        });
+      }
+
+      const { data: rpcEvents } = await sb.rpc("get_production_events", { p_from: rangeStart, p_to: rangeEnd });
+      const todayEvents = (rpcEvents ?? []) as any[];
+      carsIn = todayEvents.filter((e: any) => e.kind === "in" && config.stations.includes(e.station)).length;
+      carsOut = todayEvents.filter((e: any) => e.kind === "out" && config.stations.includes(e.station)).length;
+
+      const now = new Date();
+      delayedCount = wipVehicles.filter(v => {
+        if (!v.entry_time) return false;
+        const hours = (now.getTime() - new Date(v.entry_time).getTime()) / 3600000;
+        return hours > 24;
+      }).length;
+
+    } else {
+      // === MONTHLY PATH ===
+      // Counts + daily via aggregation RPC (small result; avoids the ~1000-row PostgREST cap on raw event pulls).
+      const { data: dailyRows } = await sb.rpc("get_month_station_daily", { station_codes: config.stations, p_from: rangeStart, p_to: rangeEnd });
+      (dailyRows ?? []).forEach((r: any) => {
+        carsIn += Number(r.ins);
+        carsOut += Number(r.outs);
+        if (!dailyBreakdown[r.day]) dailyBreakdown[r.day] = { in: 0, out: 0 };
+        dailyBreakdown[r.day].in += Number(r.ins);
+        dailyBreakdown[r.day].out += Number(r.outs);
+      });
+
+      // Per-VIN flashback rows from get_station_stays (live cars: entry/exit/stay/model).
+      const { data: staysData } = await sb.rpc("get_station_stays", { station_codes: config.stations, p_from: rangeStart, p_to: rangeEnd });
+      const stays = (staysData ?? []) as Array<{ vin: string; station: string; model: string; entered_at: string; exited_at: string | null; working_hours: number; working_days: number }>;
+
+      // Issues + shortages via RPC (server-side join over live + archived; POST body, no URL limit).
+      const { data: isRows } = await sb.rpc("get_station_issues_shortages", { station_codes: config.stations, p_from: rangeStart, p_to: rangeEnd });
+      const vinIssues: Record<string, string[]> = {};
+      const vinShortages: Record<string, any[]> = {};
+      (isRows ?? []).forEach((r: any) => {
+        const vin = r.out_vin;
+        if (!vin) return;
+        if (r.kind === "issue") {
+          if (!vinIssues[vin]) vinIssues[vin] = [];
+          if (r.title) vinIssues[vin].push(r.title);
+        } else {
+          if (!vinShortages[vin]) vinShortages[vin] = [];
+          vinShortages[vin].push({ shortage_reason: r.shortage_reason, part_type: r.part_type, parts: r.title ? r.title.split(",") : [] });
+        }
+      });
+
+      const { data: delayedVehicles } = await sb.rpc("get_delayed_vehicles", { threshold_days: 2 });
+      const delayedSet = new Set<string>();
+      (delayedVehicles ?? []).forEach((dv: any) => {
+        if (dv.current_station && config.stations.includes(dv.current_station)) delayedSet.add(dv.vin);
+      });
+
+      const allStayHours: number[] = [];
+      stays.forEach((s: any) => {
+        const wh = s.working_hours ?? 0;
+        const wd = s.working_days ?? 0;
+        if (wh > 0) allStayHours.push(wh);
+        const vin = s.vin;
+        const status = delayedSet.has(vin) && wd >= 2 ? "Delayed" : (vinIssues[vin]?.length ? "Issue" : (vinShortages[vin]?.length ? "Shortage" : "OK"));
+        const dParts: string[] = [];
+        (vinIssues[vin] || []).forEach((t: string) => dParts.push(t));
+        (vinShortages[vin] || []).forEach((sh: any) => dParts.push((sh.parts || []).join(", ") + (sh.shortage_reason ? ` [${sh.shortage_reason}]` : "")));
+        monthlyStays.push({ vin, model: s.model || "—", station: s.station, entered: s.entered_at || "", exited: s.exited_at, working_hours: wh, working_days: wd, status, details: dParts.join(" | ") });
+      });
+      avgStayHours = allStayHours.length ? allStayHours.reduce((a, b) => a + b, 0) / allStayHours.length : 0;
+      delayedCount = stays.filter((s: any) => (s.working_days ?? 0) >= 2).length;
+
+      const allIssuesCats: Record<string, number> = {};
+      Object.values(vinIssues).flat().forEach((title: string) => {
+        const t = title.toLowerCase();
+        if (t.includes("ckd")) allIssuesCats.CKD = (allIssuesCats.CKD || 0) + 1;
+        else if (t.includes("plastic") || t.includes("سبيلر")) allIssuesCats.PLASTICS = (allIssuesCats.PLASTICS || 0) + 1;
+        else if (t.includes("damage") || t.includes("خدش")) allIssuesCats.Damage = (allIssuesCats.Damage || 0) + 1;
+        else allIssuesCats.Local = (allIssuesCats.Local || 0) + 1;
+      });
+      Object.values(vinShortages).flat().forEach((s: any) => {
+        const cat = getCategoryForShortage(s);
+        allIssuesCats[cat] = (allIssuesCats[cat] || 0) + 1;
+      });
+      const totalIssues = Object.values(allIssuesCats).reduce((a, b) => a + b, 0) || 1;
+      issuePct = Object.entries(allIssuesCats).map(([cat, cnt]) => ({ category: cat, count: cnt, pct: Math.round((cnt / totalIssues) * 100) }))
+        .sort((a, b) => b.count - a.count);
+
+      wipVehicles = [];
+      categories = [];
+    }
+
+    // === DAY PATH: categorize vehicles (only if !isMonthly) ===
+    if (!isMonthly) {
+
+      if (m === "shortage") {
       const { data: shortagesData } = await sb
         .from("shortages")
         .select("id, vehicle_id, parts, shortage_reason, part_type, notes, status, created_at")
@@ -401,6 +519,7 @@ Deno.serve(async (req: Request) => {
         if (catMap[c] && catMap[c].length > 0) categories.push({ name: c, vehicles: catMap[c] });
       });
     }
+    }
 
     // === Generate PDF ===
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
@@ -415,11 +534,8 @@ Deno.serve(async (req: Request) => {
       if (y + mm > pageHeight - 15) { doc.addPage(); y = 15; }
     };
 
-    // === HEADER ===
-    doc.setFontSize(16);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(30, 41, 59);
-    doc.text(config.title, 14, y);
+    const reportTitle = isMonthly ? config.title.replace("WIP Status Report", "Monthly Flow Report") : config.title;
+    doc.text(reportTitle, 14, y);
     y += 6;
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
@@ -445,10 +561,14 @@ Deno.serve(async (req: Request) => {
     doc.text(`Report Generated: ${ts} | Period: ${rangeLabel}`, pageWidth / 2, y, { align: "center" });
     y += 8;
 
-    // === KPI CARDS ===
-    const kpis = [
+    const kpis = isMonthly ? [
+      { label: "Total In", value: carsIn, color: [59, 130, 246] },
+      { label: "Total Out", value: carsOut, color: [16, 185, 129] },
+      { label: "Avg Stay", value: avgStayHours > 0 ? `${Math.round(avgStayHours)}h` : "—", color: [245, 158, 11] },
+      { label: "% Delayed", value: carsIn > 0 ? `${Math.round((delayedCount / carsIn) * 100)}%` : "—", color: [239, 68, 68] },
+    ] : [
       { label: "Total WIP", value: wipVehicles.length, color: [245, 158, 11] },
-      { label: "Delayed WIP", value: delayedWip, color: [239, 68, 68] },
+      { label: "Delayed WIP", value: delayedCount, color: [239, 68, 68] },
       { label: "Cars In", value: carsIn, color: [59, 130, 246] },
       { label: "Cars Out", value: carsOut, color: [16, 185, 129] },
     ];
@@ -469,55 +589,56 @@ Deno.serve(async (req: Request) => {
     });
     y += 28;
 
-    // === SUMMARY TABLE ===
-    needSpace(25);
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(30, 41, 59);
-    doc.text("WIP Summary by Category", 14, y);
-    y += 3;
-    const summaryHeaders = ["Category", ...categories.map(c => c.name), "Total"];
-    const stockRow = ["Stock", ...categories.map(c => String(c.vehicles.length)), String(wipVehicles.length)];
-    (autotable as any)(doc, {
-      startY: y,
-      head: [summaryHeaders],
-      body: [stockRow],
-      theme: "grid",
-      styles: { fontSize: 9, cellPadding: 3, fontStyle: "bold" },
-      headStyles: { fillColor: config.color, textColor: 255 },
-    });
-    y = (doc as any).lastAutoTable.finalY + 8;
-
-    // === BAR CHART + PIE CHART ===
-    needSpace(55);
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(30, 41, 59);
-    doc.text("Category Distribution", 14, y);
-    y += 3;
-    const chartColors = [
-      [211, 84, 0], [59, 130, 246], [16, 185, 129], [245, 158, 11],
-      [139, 92, 246], [239, 68, 68], [20, 184, 166], [249, 115, 22],
-    ];
-    const chartData = categories.map((c, i) => ({
-      label: c.name,
-      value: c.vehicles.length,
-      color: chartColors[i % chartColors.length],
-    }));
-    // Bar chart on left half (charts are non-essential — never let them fail the report)
-    try { drawBarChart(doc, 14, y, pageWidth / 2 - 25, 45, chartData); } catch (e) { console.error("bar chart failed:", e); }
-
-    // Pie/donut chart on right half
-    if (chartData.length > 0) {
-      const pieCx = pageWidth / 2 + 30;
-      const pieCy = y + 22;
-      try {
-        drawPieChart(doc, pieCx, pieCy, 20, chartData);
-        drawPieLegend(doc, pieCx + 30, pieCy - chartData.length * 4, chartData);
-      } catch (e) { console.error("pie chart failed:", e); }
+    // === SUMMARY TABLE (day only; monthly uses Flashback) ===
+    if (!isMonthly) {
+      needSpace(25);
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(30, 41, 59);
+      doc.text("WIP Summary by Category", 14, y);
+      y += 3;
+      const summaryHeaders = ["Category", ...categories.map(c => c.name), "Total"];
+      const stockRow = ["Stock", ...categories.map(c => String(c.vehicles.length)), String(wipVehicles.length)];
+      (autotable as any)(doc, {
+        startY: y,
+        head: [summaryHeaders],
+        body: [stockRow],
+        theme: "grid",
+        styles: { fontSize: 9, cellPadding: 3, fontStyle: "bold" },
+        headStyles: { fillColor: config.color, textColor: 255 },
+      });
+      y = (doc as any).lastAutoTable.finalY + 8;
     }
 
-    y += Math.max(categories.length * 15 + 5, 45);
+    // === BAR CHART + PIE CHART (day only) ===
+    if (!isMonthly) {
+      needSpace(55);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(30, 41, 59);
+      doc.text("Category Distribution", 14, y);
+      y += 3;
+      const chartColors = [
+        [211, 84, 0], [59, 130, 246], [16, 185, 129], [245, 158, 11],
+        [139, 92, 246], [239, 68, 68], [20, 184, 166], [249, 115, 22],
+      ];
+      const chartData = categories.map((c, i) => ({
+        label: c.name,
+        value: c.vehicles.length,
+        color: chartColors[i % chartColors.length],
+      }));
+      try { drawBarChart(doc, 14, y, pageWidth / 2 - 25, 45, chartData); } catch (e) { console.error("bar chart failed:", e); }
+
+      if (chartData.length > 0) {
+        const pieCx = pageWidth / 2 + 30;
+        const pieCy = y + 22;
+        try {
+          drawPieChart(doc, pieCx, pieCy, 20, chartData);
+          drawPieLegend(doc, pieCx + 30, pieCy - chartData.length * 4, chartData);
+        } catch (e) { console.error("pie chart failed:", e); }
+      }
+      y += Math.max(categories.length * 15 + 5, 45);
+    }
 
     // === DAILY BREAKDOWN (monthly reports only) ===
     if (isMonthly) {
@@ -531,17 +652,18 @@ Deno.serve(async (req: Request) => {
         doc.setTextColor(30, 58, 138);
         doc.text(`Daily In/Out Breakdown — ${rangeLabel}`, 14, y);
         y += 5;
-        const dailyHeaders = ["Date", "Cars In", "Cars Out", "Net"];
-        const dailyRows = days.map(d => [
-          d,
-          String(dailyBreakdown[d].in),
-          String(dailyBreakdown[d].out),
-          String(dailyBreakdown[d].in - dailyBreakdown[d].out),
-        ]);
-        // Totals row
+        let cumulative = 0;
+        const dailyHeaders = ["Date", "Cars In", "Cars Out", "Net", "Cumulative WIP"];
+        const dailyRows = days.map(d => {
+          const net = dailyBreakdown[d].in - dailyBreakdown[d].out;
+          cumulative += net;
+          return [
+            d, String(dailyBreakdown[d].in), String(dailyBreakdown[d].out), String(net), String(cumulative)
+          ];
+        });
         const totalIn = days.reduce((s, d) => s + dailyBreakdown[d].in, 0);
         const totalOut = days.reduce((s, d) => s + dailyBreakdown[d].out, 0);
-        dailyRows.push(["TOTAL", String(totalIn), String(totalOut), String(totalIn - totalOut)]);
+        dailyRows.push(["TOTAL", String(totalIn), String(totalOut), String(totalIn - totalOut), String(cumulative)]);
         (autotable as any)(doc, {
           startY: y,
           head: [dailyHeaders],
@@ -549,99 +671,220 @@ Deno.serve(async (req: Request) => {
           theme: "grid",
           styles: { fontSize: 8, cellPadding: 2 },
           headStyles: { fillColor: config.color, textColor: 255 },
-          columnStyles: { 0: { cellWidth: 35 }, 1: { cellWidth: 25 }, 2: { cellWidth: 25 }, 3: { cellWidth: 25 } },
-          // Bold the totals row
+          columnStyles: { 0: { cellWidth: 32 }, 1: { cellWidth: 22 }, 2: { cellWidth: 22 }, 3: { cellWidth: 20 }, 4: { cellWidth: 30 } },
           didParseCell: (data: any) => {
-            if (data.section === "body" && data.row.index === dailyRows.length - 1) {
-              data.cell.styles.fontStyle = "bold";
+            if (data.section === "body" && data.row.index === dailyRows.length - 1) data.cell.styles.fontStyle = "bold";
+          },
+        });
+        y = (doc as any).lastAutoTable.finalY + 8;
+
+        needSpace(35);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 41, 59);
+        doc.text("In/Out Trend", 14, y);
+        y += 3;
+        const lineData = days.map(d => ({ day: d, ...dailyBreakdown[d] }));
+        try { drawLineChart(doc, 14, y, pageWidth - 28, 30, lineData); } catch (e) { console.error("line chart failed:", e); }
+        y += 35;
+      }
+    }
+
+    // === MODEL DISTRIBUTION CHART (day only) ===
+    if (!isMonthly) {
+      const modelCounts: Record<string, number> = {};
+      wipVehicles.forEach(v => {
+        const model = v.lot_model || "Unknown";
+        modelCounts[model] = (modelCounts[model] ?? 0) + 1;
+      });
+      const modelEntries = Object.entries(modelCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+      if (modelEntries.length > 0) {
+        needSpace(35);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 41, 59);
+        doc.text("WIP by Model", 14, y);
+        y += 3;
+        const chartColors = [
+          [211, 84, 0], [59, 130, 246], [16, 185, 129], [245, 158, 11],
+          [139, 92, 246], [239, 68, 68], [20, 184, 166], [249, 115, 22],
+        ];
+        const modelChartData = modelEntries.map((e, i) => ({
+          label: e[0] || "Unknown",
+          value: e[1],
+          color: chartColors[i % chartColors.length],
+        }));
+        try { drawBarChart(doc, 14, y, pageWidth / 2 - 20, 40, modelChartData); } catch (e) { console.error("model bar chart failed:", e); }
+
+        if (modelChartData.length > 0) {
+          const mpCx = pageWidth / 2 + 30;
+          const mpCy = y + 22;
+          try {
+            drawPieChart(doc, mpCx, mpCy, 20, modelChartData);
+            drawPieLegend(doc, mpCx + 30, mpCy - modelChartData.length * 4, modelChartData);
+          } catch (e) { console.error("model pie chart failed:", e); }
+        }
+        y += Math.max(modelEntries.length * 15 + 5, 40);
+      }
+    }
+
+    // === MONTHLY-ONLY SECTIONS ===
+    if (isMonthly) {
+      // Flashback table
+      if (monthlyStays.length > 0) {
+        needSpace(30);
+        doc.addPage();
+        y = 15;
+        doc.setFontSize(13);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 58, 138);
+        doc.text(`Monthly Flow Flashback — ${rangeLabel}`, 14, y);
+        y += 5;
+        const fbHeaders = ["VIN", "Model", "Station", "Entry", "Exit", "Stay", "Days", "Status"];
+        const fbRows = monthlyStays.map(s => [
+          s.vin, s.model, s.station,
+          formatDateOnly(s.entered),
+          formatDateOnly(s.exited),
+          s.working_hours > 0 ? `${Math.round(s.working_hours)}h` : "—",
+          s.working_days > 0 ? String(s.working_days) : "—",
+          s.status
+        ]);
+        (autotable as any)(doc, {
+          startY: y,
+          head: [fbHeaders],
+          body: fbRows,
+          theme: "grid",
+          styles: { fontSize: 6, cellPadding: 1.5, overflow: "truncate" },
+          headStyles: { fillColor: config.color, textColor: 255 },
+          columnStyles: { 0: { cellWidth: 38 }, 1: { cellWidth: 28 }, 2: { cellWidth: 18 }, 3: { cellWidth: 22 }, 4: { cellWidth: 22 }, 5: { cellWidth: 14 }, 6: { cellWidth: 10 }, 7: { cellWidth: 18 } },
+        });
+        y = (doc as any).lastAutoTable.finalY + 8;
+      }
+
+      // Issue % table
+      if (issuePct.length > 0) {
+        needSpace(25);
+        doc.setFontSize(12);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 41, 59);
+        doc.text("Issues & Shortages by Category", 14, y);
+        y += 3;
+        const pctHeaders = ["Category", "Count", "%"];
+        const pctRows = issuePct.map(x => [x.category, String(x.count), `${x.pct}%`]);
+        (autotable as any)(doc, {
+          startY: y,
+          head: [pctHeaders],
+          body: pctRows,
+          theme: "grid",
+          styles: { fontSize: 9, cellPadding: 3 },
+          headStyles: { fillColor: config.color, textColor: 255 },
+          columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 30 }, 2: { cellWidth: 30 } },
+        });
+        y = (doc as any).lastAutoTable.finalY + 8;
+      }
+
+      // Per-VIN issue/shortage details (mirrors the daily WIP Details tables).
+      const detailVins = monthlyStays.filter(s => s.details);
+      if (detailVins.length > 0) {
+        needSpace(30);
+        doc.addPage();
+        y = 15;
+        doc.setFontSize(13);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 58, 138);
+        doc.text(`Monthly Details (Issues & Shortages) — ${rangeLabel}`, 14, y);
+        y += 5;
+        const dHeaders = ["VIN", "Model", "Station", "Issue / Shortage", "Entry", "Exit"];
+        const dRows = detailVins.map(s => [s.vin, s.model, s.station, s.details, formatDateOnly(s.entered), formatDateOnly(s.exited)]);
+        (autotable as any)(doc, {
+          startY: y,
+          head: [dHeaders],
+          body: dRows,
+          theme: "grid",
+          styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" },
+          headStyles: { fillColor: config.color, textColor: 255, fontSize: 8 },
+          columnStyles: { 0: { cellWidth: 45 }, 1: { cellWidth: 28 }, 2: { cellWidth: 18 }, 3: { cellWidth: 90 }, 4: { cellWidth: 24 }, 5: { cellWidth: 24 } },
+          didParseCell: (data: any) => {
+            if (hasArabicFont && data.section === "body" && data.column.index === 3) {
+              const cellText = data.cell.raw;
+              if (cellText && hasArabic(cellText)) data.cell.styles.font = "Amiri";
             }
           },
         });
         y = (doc as any).lastAutoTable.finalY + 8;
       }
-    }
 
-    // === MODEL DISTRIBUTION CHART ===
-    const modelCounts: Record<string, number> = {};
-    wipVehicles.forEach(v => {
-      const model = v.lot_model || "Unknown";
-      modelCounts[model] = (modelCounts[model] ?? 0) + 1;
-    });
-    const modelEntries = Object.entries(modelCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
-    if (modelEntries.length > 0) {
-      needSpace(35);
+      // Delay summary
+      needSpace(20);
       doc.setFontSize(11);
       doc.setFont("helvetica", "bold");
       doc.setTextColor(30, 41, 59);
-      doc.text("WIP by Model", 14, y);
-      y += 3;
-      const modelChartData = modelEntries.map((e, i) => ({
-        label: e[0] || "Unknown",
-        value: e[1],
-        color: chartColors[i % chartColors.length],
-      }));
-      try { drawBarChart(doc, 14, y, pageWidth / 2 - 20, 40, modelChartData); } catch (e) { console.error("model bar chart failed:", e); }
-
-      // Pie chart for models on right
-      if (modelChartData.length > 0) {
-        const mpCx = pageWidth / 2 + 30;
-        const mpCy = y + 22;
-        try {
-          drawPieChart(doc, mpCx, mpCy, 20, modelChartData);
-          drawPieLegend(doc, mpCx + 30, mpCy - modelChartData.length * 4, modelChartData);
-        } catch (e) { console.error("model pie chart failed:", e); }
-      }
-      y += Math.max(modelEntries.length * 15 + 5, 40);
+      doc.text("Delay Summary", 14, y);
+      y += 5;
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(71, 85, 105);
+      const delayedVehicles = monthlyStays.filter(s => s.working_days >= 2);
+      const avgDelayDays = delayedVehicles.length > 0
+        ? (delayedVehicles.reduce((sum, s) => sum + s.working_days, 0) / delayedVehicles.length).toFixed(1)
+        : "—";
+      const maxDelayDays = delayedVehicles.length > 0
+        ? Math.max(...delayedVehicles.map(s => s.working_days))
+        : 0;
+      doc.text(`% Delayed: ${carsIn > 0 ? Math.round((delayedCount / carsIn) * 100) : 0}% | Avg over-threshold: ${avgDelayDays} days | Longest delay: ${maxDelayDays} days`, 14, y);
+      y += 10;
     }
 
-    // === DETAILED BREAKDOWN ===
-    categories.forEach(cat => {
-      needSpace(30);
-      doc.addPage();
-      y = 15;
+    // === DETAILED BREAKDOWN (day only) ===
+    if (!isMonthly) {
+      categories.forEach(cat => {
+        needSpace(30);
+        doc.addPage();
+        y = 15;
 
-      doc.setFontSize(13);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(30, 58, 138);
-      doc.text(`WIP Details: ${cat.name} (${cat.vehicles.length} Cars)`, 14, y);
-      y += 5;
+        doc.setFontSize(13);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 58, 138);
+        doc.text(`WIP Details: ${cat.name} (${cat.vehicles.length} Cars)`, 14, y);
+        y += 5;
 
-      const detailHeaders = ["VIN", "Model", "Color", "Category", "Issue", "Entry Time"];
-      const detailRows = cat.vehicles.map(v => [
-        v.vin,
-        v.lot_model || "—",
-        v.actual_color_id ? (colorMap[v.actual_color_id] || "—") : "—",
-        (v as any).category || cat.name,
-        (v as any).issue || "—",
-        formatDateTime(v.entry_time),
-      ]);
+        const detailHeaders = ["VIN", "Model", "Color", "Category", "Issue", "Entry Time"];
+        const detailRows = cat.vehicles.map(v => [
+          v.vin,
+          v.lot_model || "—",
+          v.actual_color_id ? (colorMap[v.actual_color_id] || "—") : "—",
+          (v as any).category || cat.name,
+          (v as any).issue || "—",
+          formatDateTime(v.entry_time),
+        ]);
 
-      (autotable as any)(doc, {
-        startY: y,
-        head: [detailHeaders],
-        body: detailRows,
-        theme: "grid",
-        styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" },
-        headStyles: { fillColor: config.color, textColor: 255, fontSize: 8 },
-        columnStyles: {
-          0: { cellWidth: 50 },
-          1: { cellWidth: 25 },
-          2: { cellWidth: 15 },
-          3: { cellWidth: 22 },
-          4: { cellWidth: 98 },
-          5: { cellWidth: 38 },
-        },
-        didParseCell: (data: any) => {
-          if (hasArabicFont && data.section === "body" && data.column.index === 4) {
-            const cellText = data.cell.raw;
-            if (cellText && hasArabic(cellText)) {
-              data.cell.styles.font = "Amiri";
+        (autotable as any)(doc, {
+          startY: y,
+          head: [detailHeaders],
+          body: detailRows,
+          theme: "grid",
+          styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" },
+          headStyles: { fillColor: config.color, textColor: 255, fontSize: 8 },
+          columnStyles: {
+            0: { cellWidth: 50 },
+            1: { cellWidth: 25 },
+            2: { cellWidth: 15 },
+            3: { cellWidth: 22 },
+            4: { cellWidth: 98 },
+            5: { cellWidth: 38 },
+          },
+          didParseCell: (data: any) => {
+            if (hasArabicFont && data.section === "body" && data.column.index === 4) {
+              const cellText = data.cell.raw;
+              if (cellText && hasArabic(cellText)) {
+                data.cell.styles.font = "Amiri";
+              }
             }
-          }
-        },
+          },
+        });
+        y = (doc as any).lastAutoTable.finalY + 8;
       });
-      y = (doc as any).lastAutoTable.finalY + 8;
-    });
+    }
 
     // === FOOTER ===
     const pageCount = doc.getNumberOfPages();

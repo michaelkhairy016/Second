@@ -24,6 +24,11 @@ export async function archiveContractVehicle(
     supabase.from("shortages").select("*").eq("vehicle_id", vehicleId),
   ]);
 
+  // Dedup: replace any existing archive row(s) for this VIN first, so repeated
+  // archive/restore cycles can't accumulate duplicate rows (which re-inflate
+  // report counts via get_production_events).
+  await supabase.from("vehicle_archive").delete().eq("vin", vehicle.vin);
+
   // Insert into vehicle_archive
   await supabase.from("vehicle_archive").insert({
     vin: vehicle.vin,
