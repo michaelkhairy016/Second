@@ -457,6 +457,16 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
       });
       if (error) throw error;
 
+      // Launch-mode equivalent of body-shop OUT: scanning a car IN at WBS that was released
+      // to Line Feeding also logs a body_shop out-event so body-out counts populate.
+      if (station === "wbs" && kind === "in" && picked.current_station === "line_feeding") {
+        await supabase.from("station_events").insert({
+          vehicle_id: picked.id, station: "body_shop", kind: "out", color_used_id: null,
+          recorded_by: user?.id, source: "body_out_equiv",
+          meta: { derived: true, pulled_from: "line_feeding" },
+        });
+      }
+
       // WBS OUT: Quik 300 contract vehicles auto-archive (electro deposition only)
       if (kind === "out" && station === "wbs" && picked.vin.startsWith("CONTRACT-") && picked.contract_model === "Quik 300") {
         await archiveContractVehicle(supabase, picked.id, "wbs");

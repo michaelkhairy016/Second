@@ -14,7 +14,8 @@ import { Calendar } from "@/components/ui/calendar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { LayoutDashboard, Download, Search, Loader2, CalendarDays, ChevronDown, ChevronRight, FileSpreadsheet } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell as RechartsCell, CartesianGrid, LineChart, Line } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell as RechartsCell, CartesianGrid, LineChart, Line, AreaChart, Area } from "recharts";
+import { useColors } from "@/hooks/use-colors";
 import { toast } from "sonner";
 import { STATIONS, stationByCode } from "@/lib/stations";
 import { exportToCSV } from "@/lib/export";
@@ -27,17 +28,17 @@ export const Route = createFileRoute("/dashboard")({
 type EventRow = { station: string; kind: string; recorded_at: string; vehicle_id: string; model?: string | null; vin?: string | null; archived?: boolean };
 type ShortageRow = {
   id: string; vehicle_id: string; parts: string[]; shortage_reason: string | null; part_type: string | null;
-  status: string; created_at: string; cleared_at?: string | null; vehicle: { vin: string; vin_suffix: string } | null;
+  status: string; created_at: string; cleared_at?: string | null; vehicle: { vin: string; vin_suffix: string; contract_model: string | null; lot_id: string | null } | null;
 };
 type VehicleRow = { id: string; current_station: string | null; lot_id: string | null; vin: string; vin_suffix: string; updated_at: string; contract_model: string | null; completed_at: string | null };
 type LotRow = { id: string; model: string };
 type IssueRow = { id: string; vehicle_id: string | null; status: string; title: string };
 
-const DEPARTMENTS = ["overview", "shortages", "pbs", "wbs", "delayed", "reports", "trends"] as const;
+const DEPARTMENTS = ["overview", "shortages", "pbs", "wbs", "delayed", "reports", "trends", "colors"] as const;
 type Dept = typeof DEPARTMENTS[number];
 
-const DEPT_STATION: Record<string, string> = { overview: "", shortages: "shortage", pbs: "pbs", wbs: "wbs", delayed: "", reports: "", trends: "" };
-const DEPT_LABEL: Record<string, string> = { overview: "Overview", shortages: "Shortages", pbs: "PBS", wbs: "WBS", delayed: "Delayed", reports: "Reports", trends: "Trends" };
+const DEPT_STATION: Record<string, string> = { overview: "", shortages: "shortage", pbs: "pbs", wbs: "wbs", delayed: "", reports: "", trends: "", colors: "" };
+const DEPT_LABEL: Record<string, string> = { overview: "Overview", shortages: "Shortages", pbs: "PBS", wbs: "WBS", delayed: "Delayed", reports: "Reports", trends: "Trends", colors: "Color Tracking" };
 
 const SHORTAGE_CATEGORIES = ["PLASTICS PART", "Local", "CKD", "Scratches"] as const;
 const PBS_CATEGORIES = ["No Issue", "CKD", "Local", "Dismantled"] as const;
@@ -120,14 +121,14 @@ function Page() {
     const [evRes, shRes, lRes, iRes, mEvRes, mShRes, osRes, clRes, avRes] = await Promise.all([
       // Today's events via unified RPC (carries vin/model/archived — no map dependency, no dashes)
       supabase.rpc("get_production_events", { p_from: dayStart, p_to: dayEnd }),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, vehicle:vehicles(vin, vin_suffix)").gte("created_at", dayStart).lte("created_at", dayEnd),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").gte("created_at", dayStart).lte("created_at", dayEnd),
       supabase.from("lots").select("id, model"),
       supabase.from("issues").select("id, vehicle_id, status, title").in("status", ["open", "in_progress"]),
       // Monthly events: full month range via unified RPC (includes archived vehicles)
       supabase.rpc("get_production_events", { p_from: `${monthStart}T00:00:00`, p_to: monthEndDate }),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, vin_suffix)").gte("created_at", `${monthStart}T00:00:00`).lte("created_at", monthEndDate),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").gte("created_at", `${monthStart}T00:00:00`).lte("created_at", monthEndDate),
       supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at").eq("status", "open"),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, vin_suffix)").eq("status", "cleared").gte("cleared_at", dayStart).lte("cleared_at", dayEnd),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").eq("status", "cleared").gte("cleared_at", dayStart).lte("cleared_at", dayEnd),
       // ALL vehicles (incl. completed) — single source for WIP + model resolution
       supabase.from("vehicles").select("id, current_station, lot_id, vin, vin_suffix, updated_at, contract_model, completed_at"),
     ]);
@@ -215,6 +216,18 @@ function Page() {
     return m;
   }, [allOpenShortages]);
 
+  // Earliest open-shortage created_at per vehicle — fallback entry time for shortage WIP rows
+  // whose station_event in-event is missing (entered buffer via shortage-creation, not a scan).
+  const shortageEnteredAt = useMemo(() => {
+    const m = new Map<string, string>();
+    allOpenShortages.forEach(s => {
+      if (!s.vehicle_id) return;
+      const prev = m.get(s.vehicle_id);
+      if (!prev || s.created_at < prev) m.set(s.vehicle_id, s.created_at);
+    });
+    return m;
+  }, [allOpenShortages]);
+
   const classifyPbs = useCallback((vId: string) => {
     const issueList = vehicleIssues.get(vId);
     if (!issueList || issueList.length === 0) return "No Issue";
@@ -231,7 +244,7 @@ function Page() {
     const wh = workingHoursMap.get(v.id);
     const hours = wh?.working_hours ?? 0;
     const workingDays = wh?.working_days ?? 0;
-    const enteredAt = wh?.entered_at ?? null;
+    const enteredAt = wh?.entered_at ?? (station === "shortage" ? (shortageEnteredAt.get(v.id) ?? null) : null);
     const model = v.contract_model || (v.lot_id && lotMap[v.lot_id]) || "—";
     let category = "OK";
     if (station === "shortage") category = vehicleShortageCategory.get(v.id) ?? "CKD";
@@ -247,7 +260,7 @@ function Page() {
       issueText = (vehicleIssues.get(v.id) ?? []).join("; ");
     }
     return { vin: v.vin, model, category, hours, workingDays, enteredAt, issue: issueText, vehicleId: v.id, station };
-  }, [workingHoursMap, lotMap, vehicleShortageCategory, classifyPbs, classifyWbs, allOpenShortages, vehicleIssues]);
+  }, [workingHoursMap, lotMap, vehicleShortageCategory, shortageEnteredAt, classifyPbs, classifyWbs, allOpenShortages, vehicleIssues]);
 
   // Live WIP for current station tab — ALL vehicles, no delay filter
   const liveWip = useMemo(() => {
@@ -455,7 +468,7 @@ function Page() {
             station: v.current_station,
             issue: issueText,
             category,
-            enteredAt: wh?.entered_at ?? null,
+            enteredAt: wh?.entered_at ?? (activeDept === "shortages" ? (shortageEnteredAt.get(v.id) ?? null) : null),
           };
         });
     }
@@ -476,7 +489,7 @@ function Page() {
         .filter(s => mapShortageCategory(s) === category)
         .map(s => ({
           vin: s.vehicle?.vin ?? vinMap.get(s.vehicle_id) ?? "—",
-          model: vModel.get(s.vehicle_id) || "—",
+          model: s.vehicle?.contract_model || (s.vehicle?.lot_id && lotMap[s.vehicle.lot_id]) || vModel.get(s.vehicle_id) || "Unknown",
           station: null,
           issue: (s.parts || []).join(", ") || (s as any).notes || "",
           // In = when shortage was logged (created_at); Out = when cleared (cleared_at)
@@ -504,7 +517,7 @@ function Page() {
           ? (e.vehicle_id ? (stationEntryMap.get(`${e.vehicle_id}|${e.station}`) ?? e.recorded_at) : e.recorded_at)
           : e.recorded_at,
       }));
-  }, [wipVehicles, dayEvents, monthDayEvents, activeDept, vehicleIssues, vehicleShortageCategory, vModel, lotMap, allVehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday, monthlyShortages, stationEntryMap]);
+  }, [wipVehicles, dayEvents, monthDayEvents, activeDept, vehicleIssues, vehicleShortageCategory, shortageEnteredAt, vModel, lotMap, allVehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday, monthlyShortages, stationEntryMap]);
 
   const downloadReport = async (period: "day" | "month" = "day") => {
     await fetchReport(activeDept === "shortages" ? "shortage" : activeDept, selectedDate, period, `${activeDept}-${period === "month" ? "monthly" : "daily"}-report-${selectedDate}.pdf`);
@@ -690,6 +703,8 @@ function Page() {
               <ReportsSection selectedMonth={selectedMonth} setSelectedMonth={setSelectedMonth} monthCalOpen={monthCalOpen} setMonthCalOpen={setMonthCalOpen} onDownloadReport={fetchReport} reportBusy={reportBusy} />
             ) : d === "trends" ? (
               <TrendsSection />
+            ) : d === "colors" ? (
+              <ColorTrackingSection />
             ) : (
               <>
                 {/* Stat Boxes */}
@@ -1668,6 +1683,296 @@ function TrendsSection() {
               <Bar dataKey="jph" name="JPH" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Color Tracking — analytics for colors assigned at paint vs job-order plans.
+// Panels: (1) Planned vs Actual per job order, (2) Color distribution by model,
+// (3) Paint activity over time, (4) Unpainted / pending backlog.
+// ============================================================================
+const COLOR_PALETTE = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#0ea5e9", "#ec4899", "#14b8a6", "#f97316", "#6366f1", "#84cc16", "#a855f7"];
+const POST_PAINT_STATIONS_CT = ["paint", "pbs", "tcf", "waiting_repair", "repair", "cs", "pdi", "shortage"];
+
+function ColorTrackingSection() {
+  const { colors } = useColors();
+  const [monthsBack, setMonthsBack] = useState(3);
+  const [modelFilter, setModelFilter] = useState<string>("all");
+  const [loading, setLoading] = useState(true);
+  const [vehicles, setVehicles] = useState<any[]>([]);
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [paintEvents, setPaintEvents] = useState<any[]>([]);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const now = new Date();
+        const from = new Date(now.getFullYear(), now.getMonth() - (monthsBack - 1), 1);
+        const fromStr = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, "0")}-01T00:00:00`;
+        const [{ data: vRes }, { data: jRes }, { data: peRes }] = await Promise.all([
+          supabase.from("vehicles").select("id, contract_model, planned_color_id, actual_color_id, current_station, completed_at, job_order_id"),
+          supabase.from("job_orders").select("id, job_code, color_plan, units, status"),
+          supabase.from("station_events").select("vehicle_id, color_used_id, recorded_at").eq("station", "paint").eq("kind", "in").gte("recorded_at", fromStr),
+        ]);
+        if (cancel) return;
+        setVehicles(vRes ?? []);
+        setJobs(jRes ?? []);
+        setPaintEvents(peRes ?? []);
+      } finally {
+        if (!cancel) setLoading(false);
+      }
+    })();
+    return () => { cancel = true; };
+  }, [monthsBack]);
+
+  const colorCode = (id: string | null) => id ? (colors.get(id)?.code ?? "—") : "—";
+  const colorName = (id: string | null) => id ? (colors.get(id)?.name ?? id.slice(0, 6)) : "Unassigned";
+  const colorForIdx = (i: number) => COLOR_PALETTE[i % COLOR_PALETTE.length];
+
+  const scopedVehicles = useMemo(() => {
+    if (modelFilter === "all") return vehicles;
+    return vehicles.filter(v => (v.contract_model || "Unknown") === modelFilter);
+  }, [vehicles, modelFilter]);
+
+  // 1. Planned vs Actual per job order
+  const jobRows = useMemo(() => {
+    return jobs.map(j => {
+      const plan = (j.color_plan && typeof j.color_plan === "object") ? (j.color_plan as Record<string, number>) : {};
+      const jobVehicles = vehicles.filter(v => v.job_order_id === j.id);
+      const actualByColor: Record<string, number> = {};
+      let actualTotal = 0;
+      jobVehicles.forEach(v => {
+        if (v.actual_color_id) {
+          actualByColor[v.actual_color_id] = (actualByColor[v.actual_color_id] ?? 0) + 1;
+          actualTotal++;
+        }
+      });
+      const plannedTotal = Object.values(plan).reduce((a, b) => a + (Number(b) || 0), 0);
+      const colorIds = Array.from(new Set([...Object.keys(plan), ...Object.keys(actualByColor)]));
+      const perColor = colorIds.map(cid => ({ id: cid, planned: Number(plan[cid]) || 0, actual: actualByColor[cid] ?? 0 }));
+      const compliance = plannedTotal > 0 ? Math.round((actualTotal / plannedTotal) * 100) : (actualTotal > 0 ? 100 : 0);
+      return { job: j, perColor, plannedTotal, actualTotal, compliance };
+    })
+      .filter(r => r.plannedTotal > 0 || r.actualTotal > 0)
+      .sort((a, b) => b.actualTotal - a.actualTotal);
+  }, [jobs, vehicles]);
+
+  // 2. Color distribution by model
+  const modelColor = useMemo(() => {
+    const byModel: Record<string, Record<string, number>> = {};
+    scopedVehicles.forEach(v => {
+      if (!v.actual_color_id) return;
+      const model = v.contract_model || "Unknown";
+      if (!byModel[model]) byModel[model] = {};
+      byModel[model][v.actual_color_id] = (byModel[model][v.actual_color_id] ?? 0) + 1;
+    });
+    const models = Object.keys(byModel).sort();
+    const colorIds = Array.from(new Set(models.flatMap(m => Object.keys(byModel[m]))));
+    const stackData = models.map(m => {
+      const row: Record<string, string | number> = { model: m };
+      colorIds.forEach(cid => { row[colorCode(cid)] = byModel[m][cid] ?? 0; });
+      return row;
+    });
+    const pieData = colorIds
+      .map(cid => ({ name: colorCode(cid), value: models.reduce((s, m) => s + (byModel[m][cid] ?? 0), 0) }))
+      .filter(x => x.value > 0);
+    return { stackData, colorIds, pieData };
+  }, [scopedVehicles, colors]);
+
+  // 3. Paint activity over time
+  const overTime = useMemo(() => {
+    const byDay: Record<string, Record<string, number>> = {};
+    paintEvents.forEach(e => {
+      if (!e.color_used_id) return;
+      const d = new Date(e.recorded_at);
+      const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      if (!byDay[day]) byDay[day] = {};
+      byDay[day][e.color_used_id] = (byDay[day][e.color_used_id] ?? 0) + 1;
+    });
+    const days = Object.keys(byDay).sort();
+    const colorIds = Array.from(new Set(days.flatMap(d => Object.keys(byDay[d]))));
+    const data = days.map(d => {
+      const row: Record<string, string | number> = { day: d.slice(5) };
+      colorIds.forEach(cid => { row[colorCode(cid)] = byDay[d][cid] ?? 0; });
+      return row;
+    });
+    return { data, colorIds };
+  }, [paintEvents, colors]);
+
+  // 4. Unpainted backlog
+  const backlog = useMemo(() => {
+    return scopedVehicles
+      .filter(v => v.actual_color_id === null && POST_PAINT_STATIONS_CT.includes(v.current_station ?? ""))
+      .map(v => ({ id: v.id, model: v.contract_model || "Unknown", station: v.current_station, planned: v.planned_color_id }))
+      .sort((a, b) => a.model.localeCompare(b.model));
+  }, [scopedVehicles]);
+
+  const totalPainted = scopedVehicles.filter(v => v.actual_color_id).length;
+  const totalPlannedAll = jobRows.reduce((s, r) => s + r.plannedTotal, 0);
+  const totalActualAll = jobRows.reduce((s, r) => s + r.actualTotal, 0);
+  const overallCompliance = totalPlannedAll > 0 ? Math.round((totalActualAll / totalPlannedAll) * 100) : 0;
+  const activeColors = new Set(scopedVehicles.filter(v => v.actual_color_id).map(v => v.actual_color_id)).size;
+  const modelOptions = useMemo(() => Array.from(new Set(vehicles.map(v => v.contract_model || "Unknown"))).sort(), [vehicles]);
+
+  if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
+
+  return (
+    <div className="space-y-6">
+      {/* Filter bar */}
+      <div className="flex items-center gap-4 flex-wrap">
+        <label className="text-sm font-medium">Model:</label>
+        <select value={modelFilter} onChange={e => setModelFilter(e.target.value)} className="border rounded-md px-2 py-1 text-sm bg-background">
+          <option value="all">All Models</option>
+          {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <label className="text-sm font-medium ml-4">Paint activity range:</label>
+        <select value={monthsBack} onChange={e => setMonthsBack(Number(e.target.value))} className="border rounded-md px-2 py-1 text-sm bg-background">
+          {[1, 3, 6, 12].map(n => <option key={n} value={n}>Last {n} month{n > 1 ? "s" : ""}</option>)}
+        </select>
+      </div>
+
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-card p-4 rounded-lg border"><p className="text-xs text-muted-foreground">Total Painted</p><p className="text-2xl font-bold text-blue-600">{totalPainted}</p></div>
+        <div className="bg-card p-4 rounded-lg border"><p className="text-xs text-muted-foreground">Overall Compliance</p><p className="text-2xl font-bold text-green-600">{overallCompliance}%</p></div>
+        <div className="bg-card p-4 rounded-lg border"><p className="text-xs text-muted-foreground">Pending Unpainted</p><p className="text-2xl font-bold text-amber-600">{backlog.length}</p></div>
+        <div className="bg-card p-4 rounded-lg border"><p className="text-xs text-muted-foreground">Active Colors</p><p className="text-2xl font-bold text-purple-600">{activeColors}</p></div>
+      </div>
+
+      {/* Charts grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-card p-6 rounded-lg border shadow-sm">
+          <h2 className="text-xl font-bold mb-1">Color Distribution by Model</h2>
+          <p className="text-xs text-muted-foreground mb-4">Painted vehicles (actual color) per model.</p>
+          {modelColor.stackData.length === 0 ? <p className="text-sm text-muted-foreground">No painted vehicles.</p> : (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={modelColor.stackData} margin={{ top: 10, right: 20, bottom: 5, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+                <XAxis dataKey="model" stroke="currentColor" fontSize={11} interval={0} angle={-15} textAnchor="end" height={60} />
+                <YAxis stroke="currentColor" fontSize={12} allowDecimals={false} />
+                <Tooltip />
+                <Legend />
+                {modelColor.colorIds.map((cid, i) => (
+                  <Bar key={cid} dataKey={colorCode(cid)} name={colorName(cid)} stackId="a" fill={colorForIdx(i)} />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div className="bg-card p-6 rounded-lg border shadow-sm">
+          <h2 className="text-xl font-bold mb-1">Overall Color Mix</h2>
+          <p className="text-xs text-muted-foreground mb-4">Share of each painted color.</p>
+          {modelColor.pieData.length === 0 ? <p className="text-sm text-muted-foreground">No painted vehicles.</p> : (
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie data={modelColor.pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label>
+                  {modelColor.pieData.map((_, i) => <RechartsCell key={i} fill={colorForIdx(i)} />)}
+                </Pie>
+                <Tooltip />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      {/* Paint activity over time */}
+      <div className="bg-card p-6 rounded-lg border shadow-sm">
+        <h2 className="text-xl font-bold mb-1">Paint Activity Over Time</h2>
+        <p className="text-xs text-muted-foreground mb-4">Cars painted per color per day (paint IN events).</p>
+        {overTime.data.length === 0 ? <p className="text-sm text-muted-foreground">No paint activity in selected range.</p> : (
+          <ResponsiveContainer width="100%" height={300}>
+            <AreaChart data={overTime.data} margin={{ top: 10, right: 20, bottom: 5, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+              <XAxis dataKey="day" stroke="currentColor" fontSize={11} />
+              <YAxis stroke="currentColor" fontSize={12} allowDecimals={false} />
+              <Tooltip />
+              <Legend />
+              {overTime.colorIds.map((cid, i) => (
+                <Area key={cid} type="monotone" dataKey={colorCode(cid)} name={colorName(cid)} stackId="1" stroke={colorForIdx(i)} fill={colorForIdx(i)} fillOpacity={0.5} />
+              ))}
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Planned vs Actual per job order */}
+      <div className="bg-card p-6 rounded-lg border shadow-sm">
+        <h2 className="text-xl font-bold mb-1">Planned vs Actual per Job Order</h2>
+        <p className="text-xs text-muted-foreground mb-4">color_plan vs painted vehicles (actual_color_id) per job.</p>
+        {jobRows.length === 0 ? <p className="text-sm text-muted-foreground">No job orders with color plans.</p> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-muted">
+                <tr>
+                  <th className="p-2 font-semibold">Job Code</th>
+                  <th className="p-2 font-semibold">Planned</th>
+                  <th className="p-2 font-semibold">Actual</th>
+                  <th className="p-2 font-semibold">Compliance</th>
+                  <th className="p-2 font-semibold">Per Color (planned / actual)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobRows.map(r => (
+                  <tr key={r.job.id} className="border-b">
+                    <td className="p-2 font-mono">{r.job.job_code}</td>
+                    <td className="p-2">{r.plannedTotal}</td>
+                    <td className="p-2">{r.actualTotal}</td>
+                    <td className="p-2">
+                      <Badge variant={r.compliance >= 100 ? "success" : r.compliance >= 75 ? "secondary" : "destructive"} className="text-[10px]">{r.compliance}%</Badge>
+                    </td>
+                    <td className="p-2">
+                      <div className="flex flex-wrap gap-1">
+                        {r.perColor.map(pc => {
+                          const over = pc.actual > pc.planned;
+                          const under = pc.actual < pc.planned;
+                          return (
+                            <span key={pc.id} className={`text-[10px] px-1.5 py-0.5 rounded border ${over ? "border-red-400 text-red-600" : under ? "border-amber-400 text-amber-600" : "border-green-400 text-green-600"}`}>
+                              {colorCode(pc.id)}: {pc.planned}/{pc.actual}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Unpainted backlog */}
+      <div className="bg-card p-6 rounded-lg border shadow-sm">
+        <h2 className="text-xl font-bold mb-1">Unpainted / Pending Backlog</h2>
+        <p className="text-xs text-muted-foreground mb-4">Vehicles at/after paint with no actual color assigned ({backlog.length}).</p>
+        {backlog.length === 0 ? <p className="text-sm text-muted-foreground">No unpainted vehicles past paint.</p> : (
+          <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 bg-card">
+                <tr className="bg-muted">
+                  <th className="p-2 font-semibold">Model</th>
+                  <th className="p-2 font-semibold">Station</th>
+                  <th className="p-2 font-semibold">Planned Color</th>
+                </tr>
+              </thead>
+              <tbody>
+                {backlog.map(v => (
+                  <tr key={v.id} className="border-b">
+                    <td className="p-2">{v.model}</td>
+                    <td className="p-2"><Badge variant="secondary" className="text-[10px]">{stationByCode(v.station ?? "")?.label ?? v.station}</Badge></td>
+                    <td className="p-2 text-xs">{colorName(v.planned)} ({colorCode(v.planned)})</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

@@ -114,7 +114,7 @@ function Page() {
         `Tail cars: ${tailCount}\n` +
         `Lots: ${lotNames}\n` +
         `Colors: ${colorSummary}\n\n` +
-        `Vehicles will auto-enter WBS.`
+        `Vehicles will move to Line Feeding (scan IN at WBS to pull them in).`
       );
       if (!confirmed) return;
     } else {
@@ -127,31 +127,18 @@ function Page() {
 
     const user = (await supabase.auth.getUser()).data.user;
 
-    if (isLaunchMode) {
-      // Launch Mode: move vehicles directly to WBS + auto-log entry events
-      await supabase.from("vehicles")
-        .update({ current_station: "wbs" })
-        .in("id", vehicles.map(v => v.id));
-      const events = vehicles.map(v => ({
-        vehicle_id: v.id,
-        station: "wbs" as const,
-        kind: "in" as const,
-        recorded_by: user?.id ?? null,
-        source: "auto_launch" as const,
-      }));
-      await supabase.from("station_events").insert(events);
-    } else {
-      await supabase.from("vehicles")
-        .update({ current_station: "line_feeding" })
-        .in("id", vehicles.map(v => v.id));
-      const events = vehicles.map(v => ({
-        vehicle_id: v.id,
-        station: "line_feeding" as const,
-        kind: "in" as const,
-        recorded_by: user?.id ?? null,
-      }));
-      await supabase.from("station_events").insert(events);
-    }
+    // Release always parks vehicles at Line Feeding. In launch mode they are pulled
+    // into WBS by a human scan-IN (which also synthesizes a body_shop out-event).
+    await supabase.from("vehicles")
+      .update({ current_station: "line_feeding" })
+      .in("id", vehicles.map(v => v.id));
+    const events = vehicles.map(v => ({
+      vehicle_id: v.id,
+      station: "line_feeding" as const,
+      kind: "in" as const,
+      recorded_by: user?.id ?? null,
+    }));
+    await supabase.from("station_events").insert(events);
 
     // Decrease producible_units per affected lot
     const lotCounts: Record<string, number> = {};
@@ -159,10 +146,7 @@ function Page() {
     for (const [lotId, count] of Object.entries(lotCounts)) {
       await supabase.rpc("decrease_producible", { lot_id_input: lotId, count_input: count });
     }
-    toast.success(isLaunchMode
-      ? `Released ${vehicles.length} vehicles — auto-entered WBS`
-      : `Released ${vehicles.length} vehicles to Line Feeding`
-    );
+    toast.success(`Released ${vehicles.length} vehicles to Line Feeding`);
     reload();
   };
 
