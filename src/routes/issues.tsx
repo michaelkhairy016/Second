@@ -158,7 +158,7 @@ function Page() {
                         <span>{stationByCode(issue.station)?.label ?? issue.station}</span>
                         {issue.vehicle?.vin && <span className="font-mono text-xs">{issue.vehicle.vin}</span>}
                         {issue.reporter?.display_name && <span>by {issue.reporter.display_name}</span>}
-                        <span>{new Date(issue.created_at).toLocaleDateString()}</span>
+                        <span>{issue.created_at_cairo ?? "—"}</span>
                       </div>
                     </div>
                     <div className="flex gap-1 shrink-0">

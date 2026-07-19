@@ -3,6 +3,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import type { StationCode } from "@/lib/stations";
 import { usePresence } from "@/hooks/use-presence";
+import { loadServerClock } from "@/lib/time";
 
 export type AppRole = "superuser" | "technician" | "staff" | "status";
 
@@ -50,6 +51,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    // Sample server clock once so "now"-math is independent of the viewer's PC clock.
+    loadServerClock();
+    const refreshClock = () => loadServerClock();
+    const clockInterval = window.setInterval(refreshClock, 10 * 60 * 1000);
+    window.addEventListener("focus", refreshClock);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s); setUser(s?.user ?? null);
       if (s?.user) setTimeout(() => loadProfile(s.user.id), 0);
@@ -60,7 +67,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data.session?.user) await loadProfile(data.session.user.id);
       setReady(true);
     });
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener("focus", refreshClock);
+      window.clearInterval(clockInterval);
+    };
   }, []);
 
   const value: AuthState = {

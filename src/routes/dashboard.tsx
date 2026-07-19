@@ -25,10 +25,10 @@ export const Route = createFileRoute("/dashboard")({
   component: () => <RequireAuth><AppShell><Page /></AppShell></RequireAuth>,
 });
 
-type EventRow = { station: string; kind: string; recorded_at: string; vehicle_id: string; model?: string | null; vin?: string | null; archived?: boolean };
+type EventRow = { station: string; kind: string; recorded_at: string; recorded_at_cairo?: string | null; vehicle_id: string; model?: string | null; vin?: string | null; archived?: boolean };
 type ShortageRow = {
   id: string; vehicle_id: string; parts: string[]; shortage_reason: string | null; part_type: string | null;
-  status: string; created_at: string; cleared_at?: string | null; vehicle: { vin: string; vin_suffix: string; contract_model: string | null; lot_id: string | null } | null;
+  status: string; created_at: string; created_at_cairo?: string | null; cleared_at?: string | null; cleared_at_cairo?: string | null; vehicle: { vin: string; vin_suffix: string; contract_model: string | null; lot_id: string | null } | null;
 };
 type VehicleRow = { id: string; current_station: string | null; lot_id: string | null; vin: string; vin_suffix: string; updated_at: string; contract_model: string | null; completed_at: string | null };
 type LotRow = { id: string; model: string };
@@ -72,7 +72,7 @@ function Page() {
   const [csvBusy, setCsvBusy] = useState(false);
   const [monthCalOpen, setMonthCalOpen] = useState(false);
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
-  const [cellDialog, setCellDialog] = useState<{ title: string; rows: { vin: string; model: string; station: string | null; issue: string; category?: string; enteredAt?: string | null }[] } | null>(null);
+  const [cellDialog, setCellDialog] = useState<{ title: string; rows: { vin: string; model: string; station: string | null; issue: string; category?: string; enteredAt?: string | null; enteredAtCairo?: string | null }[] } | null>(null);
 
   const [events, setEvents] = useState<EventRow[]>([]);
   const [shortages, setShortages] = useState<ShortageRow[]>([]);
@@ -82,7 +82,7 @@ function Page() {
   const [allHistoryEvents, setAllHistoryEvents] = useState<EventRow[]>([]);
   const [lots, setLots] = useState<LotRow[]>([]);
   const [issues, setIssues] = useState<IssueRow[]>([]);
-  const [workingHoursMap, setWorkingHoursMap] = useState<Map<string, { entered_at: string; working_hours: number; working_days: number }>>(new Map());
+  const [workingHoursMap, setWorkingHoursMap] = useState<Map<string, { entered_at: string; entered_at_cairo: string; working_hours: number; working_days: number }>>(new Map());
   const [monthlyEvents, setMonthlyEvents] = useState<EventRow[]>([]);
   const [monthlyShortages, setMonthlyShortages] = useState<ShortageRow[]>([]);
 
@@ -121,14 +121,14 @@ function Page() {
     const [evRes, shRes, lRes, iRes, mEvRes, mShRes, osRes, clRes, avRes] = await Promise.all([
       // Today's events via unified RPC (carries vin/model/archived — no map dependency, no dashes)
       supabase.rpc("get_production_events", { p_from: dayStart, p_to: dayEnd }),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").gte("created_at", dayStart).lte("created_at", dayEnd),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, created_at_cairo, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").gte("created_at", dayStart).lte("created_at", dayEnd),
       supabase.from("lots").select("id, model"),
       supabase.from("issues").select("id, vehicle_id, status, title").in("status", ["open", "in_progress"]),
       // Monthly events: full month range via unified RPC (includes archived vehicles)
       supabase.rpc("get_production_events", { p_from: `${monthStart}T00:00:00`, p_to: monthEndDate }),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").gte("created_at", `${monthStart}T00:00:00`).lte("created_at", monthEndDate),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at").eq("status", "open"),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").eq("status", "cleared").gte("cleared_at", dayStart).lte("cleared_at", dayEnd),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, created_at_cairo, cleared_at, cleared_at_cairo, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").gte("created_at", `${monthStart}T00:00:00`).lte("created_at", monthEndDate),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, created_at_cairo").eq("status", "open"),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, created_at_cairo, cleared_at, cleared_at_cairo, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").eq("status", "cleared").gte("cleared_at", dayStart).lte("cleared_at", dayEnd),
       // ALL vehicles (incl. completed) — single source for WIP + model resolution
       supabase.from("vehicles").select("id, current_station, lot_id, vin, vin_suffix, updated_at, contract_model, completed_at"),
     ]);
@@ -148,9 +148,9 @@ function Page() {
     // acceptable/secondary — showing an entry date matters more than precise historical hours.)
     const allStations = ["body_shop", "wbs", "paint", "pbs", "shortage", "repair", "cs", "pdi", "tcf", "tcf_offline"];
     const { data: whData } = await supabase.rpc("get_wip_working_hours", { station_codes: allStations });
-    const whMap = new Map<string, { entered_at: string; working_hours: number; working_days: number }>();
+    const whMap = new Map<string, { entered_at: string; entered_at_cairo: string; working_hours: number; working_days: number }>();
     (whData as any[] ?? []).forEach((r: any) => {
-      whMap.set(r.vehicle_id, { entered_at: r.entered_at, working_hours: Number(r.working_hours ?? 0) || 0, working_days: Number(r.working_days ?? 0) || 0 });
+      whMap.set(r.vehicle_id, { entered_at: r.entered_at, entered_at_cairo: r.entered_at_cairo ?? "", working_hours: Number(r.working_hours ?? 0) || 0, working_days: Number(r.working_days ?? 0) || 0 });
     });
     setWorkingHoursMap(whMap);
     setMonthlyEvents(((mEvRes.data ?? []) as unknown) as EventRow[]);
@@ -228,6 +228,18 @@ function Page() {
     return m;
   }, [allOpenShortages]);
 
+  // Parallel Cairo-text map for the shortage-entry fallback (server-formatted, PC-independent).
+  const shortageEnteredCairo = useMemo(() => {
+    const m = new Map<string, string>();
+    let best: Record<string, string> = {};
+    allOpenShortages.forEach(s => {
+      if (!s.vehicle_id) return;
+      const prev = best[s.vehicle_id];
+      if (!prev || s.created_at < prev) { best[s.vehicle_id] = s.created_at; m.set(s.vehicle_id, s.created_at_cairo ?? ""); }
+    });
+    return m;
+  }, [allOpenShortages]);
+
   const classifyPbs = useCallback((vId: string) => {
     const issueList = vehicleIssues.get(vId);
     if (!issueList || issueList.length === 0) return "No Issue";
@@ -245,6 +257,7 @@ function Page() {
     const hours = wh?.working_hours ?? 0;
     const workingDays = wh?.working_days ?? 0;
     const enteredAt = wh?.entered_at ?? (station === "shortage" ? (shortageEnteredAt.get(v.id) ?? null) : null);
+    const enteredAtCairo = wh?.entered_at_cairo ?? (station === "shortage" ? (shortageEnteredCairo.get(v.id) ?? null) : null);
     const model = v.contract_model || (v.lot_id && lotMap[v.lot_id]) || "—";
     let category = "OK";
     if (station === "shortage") category = vehicleShortageCategory.get(v.id) ?? "CKD";
@@ -259,8 +272,8 @@ function Page() {
     } else {
       issueText = (vehicleIssues.get(v.id) ?? []).join("; ");
     }
-    return { vin: v.vin, model, category, hours, workingDays, enteredAt, issue: issueText, vehicleId: v.id, station };
-  }, [workingHoursMap, lotMap, vehicleShortageCategory, shortageEnteredAt, classifyPbs, classifyWbs, allOpenShortages, vehicleIssues]);
+    return { vin: v.vin, model, category, hours, workingDays, enteredAt, enteredAtCairo, issue: issueText, vehicleId: v.id, station };
+  }, [workingHoursMap, lotMap, vehicleShortageCategory, shortageEnteredAt, shortageEnteredCairo, classifyPbs, classifyWbs, allOpenShortages, vehicleIssues]);
 
   // Live WIP for current station tab — ALL vehicles, no delay filter
   const liveWip = useMemo(() => {
@@ -414,6 +427,7 @@ function Page() {
         model: e.model || "—",
         kind: e.kind,
         recorded_at: e.recorded_at,
+        recorded_at_cairo: e.recorded_at_cairo ?? null,
         vehicle_id: e.vehicle_id ?? "",
         issue: e.archived ? "" : ((vehicleIssues.get(e.vehicle_id ?? "") ?? []).join("; ")),
         shortage: e.archived ? "" : (vehicleShortageCategory.get(e.vehicle_id ?? "") ?? ""),
@@ -438,8 +452,24 @@ function Page() {
     return latest;
   }, [allHistoryEvents]);
 
+  // Parallel Cairo-text entry map for OUT rows (server-formatted, PC-independent).
+  const stationEntryCairoMap = useMemo(() => {
+    const latest = new Map<string, string>();
+    const bestIso: Record<string, string> = {};
+    allHistoryEvents.forEach(e => {
+      if (e.kind !== "in" || !e.vehicle_id) return;
+      const key = `${e.vehicle_id}|${e.station}`;
+      const prev = bestIso[key];
+      if (!prev || new Date(e.recorded_at).getTime() > new Date(prev).getTime()) {
+        bestIso[key] = e.recorded_at;
+        latest.set(key, e.recorded_at_cairo ?? "");
+      }
+    });
+    return latest;
+  }, [allHistoryEvents]);
+
   // Build vehicle detail rows for cell dialog
-  const buildCellRows = useCallback((category: string, direction: "in" | "out" | "wip", period: "today" | "month" = "today"): { vin: string; model: string; station: string | null; issue: string; enteredAt?: string | null }[] => {
+  const buildCellRows = useCallback((category: string, direction: "in" | "out" | "wip", period: "today" | "month" = "today"): { vin: string; model: string; station: string | null; issue: string; enteredAt?: string | null; enteredAtCairo?: string | null }[] => {
     const vinMap = new Map<string, string>();
     allVehicles.forEach(v => vinMap.set(v.id, v.vin));
 
@@ -469,6 +499,7 @@ function Page() {
             issue: issueText,
             category,
             enteredAt: wh?.entered_at ?? (activeDept === "shortages" ? (shortageEnteredAt.get(v.id) ?? null) : null),
+            enteredAtCairo: wh?.entered_at_cairo ?? (activeDept === "shortages" ? (shortageEnteredCairo.get(v.id) ?? null) : null),
           };
         });
     }
@@ -494,6 +525,7 @@ function Page() {
           issue: (s.parts || []).join(", ") || (s as any).notes || "",
           // In = when shortage was logged (created_at); Out = when cleared (cleared_at)
           enteredAt: direction === "out" ? (s.cleared_at ?? s.created_at) : s.created_at,
+          enteredAtCairo: direction === "out" ? (s.cleared_at_cairo ?? s.created_at_cairo ?? null) : (s.created_at_cairo ?? null),
         }));
     }
 
@@ -516,8 +548,11 @@ function Page() {
         enteredAt: direction === "out"
           ? (e.vehicle_id ? (stationEntryMap.get(`${e.vehicle_id}|${e.station}`) ?? e.recorded_at) : e.recorded_at)
           : e.recorded_at,
+        enteredAtCairo: direction === "out"
+          ? (e.vehicle_id ? (stationEntryCairoMap.get(`${e.vehicle_id}|${e.station}`) ?? e.recorded_at_cairo ?? null) : (e.recorded_at_cairo ?? null))
+          : (e.recorded_at_cairo ?? null),
       }));
-  }, [wipVehicles, dayEvents, monthDayEvents, activeDept, vehicleIssues, vehicleShortageCategory, shortageEnteredAt, vModel, lotMap, allVehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday, monthlyShortages, stationEntryMap]);
+  }, [wipVehicles, dayEvents, monthDayEvents, activeDept, vehicleIssues, vehicleShortageCategory, shortageEnteredAt, shortageEnteredCairo, vModel, lotMap, allVehicles, classifyPbs, classifyWbs, shortages, shortagesClearedToday, monthlyShortages, stationEntryMap, stationEntryCairoMap]);
 
   const downloadReport = async (period: "day" | "month" = "day") => {
     await fetchReport(activeDept === "shortages" ? "shortage" : activeDept, selectedDate, period, `${activeDept}-${period === "month" ? "monthly" : "daily"}-report-${selectedDate}.pdf`);
@@ -747,7 +782,7 @@ function Page() {
                               <td className="p-2 text-xs">
                                 {r.issue ? <span className="text-foreground">{r.issue}</span> : <span className="text-muted-foreground">—</span>}
                               </td>
-                              <td className="p-2 text-xs text-muted-foreground">{r.enteredAt ? new Date(r.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Cairo" }) + " " + new Date(r.enteredAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Cairo" }) : "—"}</td>
+                              <td className="p-2 text-xs text-muted-foreground">{r.enteredAtCairo ?? "—"}</td>
                               <td className={`p-2 font-bold ${r.hours > 24 ? "text-destructive" : "text-foreground"}`}>{r.hours.toFixed(1)}h</td>
                               <td className="p-2">{r.workingDays}d</td>
                             </tr>
@@ -950,7 +985,7 @@ function Page() {
                         <tbody className="divide-y">
                           {vehicleTracing.map((r, i) => (
                             <tr key={i}>
-                              <td className="p-2 whitespace-nowrap">{new Date(r.recorded_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Cairo" }) + " " + new Date(r.recorded_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Cairo" })}</td>
+                              <td className="p-2 whitespace-nowrap">{r.recorded_at_cairo ?? "—"}</td>
                               <td className="p-2 font-mono text-xs">{r.vin}</td>
                               <td className="p-2">{r.model}</td>
                               <td className="p-2 text-xs">{r.issue ? <Badge variant="destructive" className="text-[10px]">{r.issue}</Badge> : (d === "shortages" ? <span className="text-muted-foreground">—</span> : <Badge variant="success" className="text-[10px]">OK</Badge>)}</td>
@@ -1020,7 +1055,7 @@ type OverviewProps = {
   allOpenShortages: ShortageRow[]; lots: LotRow[]; vModel: Map<string, string>; selectedDate: string;
   classifyPbs: (vId: string) => string; classifyWbs: (vId: string) => string;
   monthStart: string; vehicleIssues: Map<string, string[]>; vehicleShortageCategory: Map<string, string>;
-  workingHoursMap: Map<string, { entered_at: string; working_hours: number; working_days: number }>;
+  workingHoursMap: Map<string, { entered_at: string; entered_at_cairo: string; working_hours: number; working_days: number }>;
 };
 
 function OverviewSection({ events, vehicles, allVehicles, issues, shortages, allOpenShortages, lots, vModel, selectedDate, classifyPbs, classifyWbs, monthStart, vehicleIssues, vehicleShortageCategory, workingHoursMap }: OverviewProps) {
@@ -1294,7 +1329,7 @@ function OverviewSection({ events, vehicles, allVehicles, issues, shortages, all
   );
 }
 
-type DelayedRow = { vin: string; model: string; category: string; hours: number; workingDays: number; enteredAt: string | null; issue: string; vehicleId: string; station: string };
+type DelayedRow = { vin: string; model: string; category: string; hours: number; workingDays: number; enteredAt: string | null; enteredAtCairo: string | null; issue: string; vehicleId: string; station: string };
 function DelayedSection({ delayThreshold, setDelayThreshold, delayedWip }: { delayThreshold: number; setDelayThreshold: (v: number) => void; delayedWip: DelayedRow[] }) {
   const stationLabels: Record<string, string> = { shortage: "Shortages", pbs: "PBS", wbs: "WBS" };
   const stationColors: Record<string, string> = { shortage: "#d35400", pbs: "#27ae60", wbs: "#2980b9" };
@@ -1750,9 +1785,9 @@ function ColorTrackingSection() {
         const [{ data: vRes }, { data: jRes }, { data: peRes }, { data: lRes }, { data: tcRes }] = await Promise.all([
           supabase.from("vehicles").select("id, vin, vin_suffix, contract_model, lot_id, planned_color_id, actual_color_id, current_station, completed_at, job_order_id"),
           supabase.from("job_orders").select("id, job_code, color_plan, units, status"),
-          supabase.from("station_events").select("vehicle_id, color_used_id, recorded_at").eq("station", "paint").eq("kind", "in").gte("recorded_at", fromStr),
+          supabase.from("station_events").select("vehicle_id, color_used_id, recorded_at, recorded_at_cairo").eq("station", "paint").eq("kind", "in").gte("recorded_at", fromStr),
           supabase.from("lots").select("id, model"),
-          supabase.from("station_events").select("vehicle_id, color_used_id, recorded_at, recorded_by").eq("station", "paint").not("color_used_id", "is", null).gte("recorded_at", todayStart),
+          supabase.from("station_events").select("vehicle_id, color_used_id, recorded_at, recorded_at_cairo, recorded_by").eq("station", "paint").not("color_used_id", "is", null).gte("recorded_at", todayStart),
         ]);
         if (cancel) return;
         setVehicles(vRes ?? []);
@@ -1870,6 +1905,7 @@ function ColorTrackingSection() {
         return {
           colorId: e.color_used_id,
           recordedAt: e.recorded_at,
+          recordedAtCairo: e.recorded_at_cairo ?? null,
           vin: v?.vin ?? e.vehicle_id,
           vinSuffix: v?.vin_suffix ?? "",
           model: v ? resolveModel(v) : "Unknown",
@@ -1934,7 +1970,7 @@ function ColorTrackingSection() {
               <tbody>
                 {coloredToday.map((r, i) => (
                   <tr key={i} className="border-b">
-                    <td className="p-2 text-xs text-muted-foreground">{new Date(r.recordedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Cairo" })}</td>
+                    <td className="p-2 text-xs text-muted-foreground">{r.recordedAtCairo ?? "—"}</td>
                     <td className="p-2 font-mono text-xs">{r.vinSuffix || r.vin}</td>
                     <td className="p-2">{r.model}</td>
                     <td className="p-2"><Badge variant="secondary" className="text-[10px]">{colorName(r.colorId)} ({colorCode(r.colorId)})</Badge></td>

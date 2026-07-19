@@ -16,7 +16,7 @@ export type Database = {
         Relationships: []
       }
       contract_vehicle_log: {
-        Row: { contract_model: string; id: string; released_at: string; released_by: string | null; released_from: string; vin: string; vin_suffix: string | null }
+        Row: { contract_model: string; id: string; released_at: string; released_at_cairo: string; released_by: string | null; released_from: string; vin: string; vin_suffix: string | null }
         Insert: { contract_model: string; id?: string; released_at?: string; released_by?: string | null; released_from: string; vin: string; vin_suffix?: string | null }
         Update: { contract_model?: string; id?: string; released_at?: string; released_by?: string | null; released_from?: string; vin?: string; vin_suffix?: string | null }
         Relationships: [{ foreignKeyName: "contract_vehicle_log_released_by_fkey"; columns: ["released_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }]
@@ -40,7 +40,7 @@ export type Database = {
         Relationships: []
       }
       issues: {
-        Row: { assigned_to: string | null; created_at: string; description: string | null; id: string; reported_by: string | null; resolved_at: string | null; resolved_by: string | null; severity: Database["public"]["Enums"]["issue_severity"]; station: Database["public"]["Enums"]["station_code"]; status: Database["public"]["Enums"]["issue_status"]; title: string; updated_at: string; vehicle_id: string | null }
+        Row: { assigned_to: string | null; created_at: string; created_at_cairo: string; description: string | null; id: string; reported_by: string | null; resolved_at: string | null; resolved_at_cairo: string | null; resolved_by: string | null; severity: Database["public"]["Enums"]["issue_severity"]; station: Database["public"]["Enums"]["station_code"]; status: Database["public"]["Enums"]["issue_status"]; title: string; updated_at: string; vehicle_id: string | null }
         Insert: { assigned_to?: string | null; created_at?: string; description?: string | null; id?: string; reported_by?: string | null; resolved_at?: string | null; resolved_by?: string | null; severity?: Database["public"]["Enums"]["issue_severity"]; station: Database["public"]["Enums"]["station_code"]; status?: Database["public"]["Enums"]["issue_status"]; title: string; updated_at?: string; vehicle_id?: string | null }
         Update: { assigned_to?: string | null; created_at?: string; description?: string | null; id?: string; reported_by?: string | null; resolved_at?: string | null; resolved_by?: string | null; severity?: Database["public"]["Enums"]["issue_severity"]; station?: Database["public"]["Enums"]["station_code"]; status?: Database["public"]["Enums"]["issue_status"]; title?: string; updated_at?: string; vehicle_id?: string | null }
         Relationships: [{ foreignKeyName: "issues_vehicle_id_fkey"; columns: ["vehicle_id"]; isOneToOne: false; referencedRelation: "vehicles"; referencedColumns: ["id"] }]
@@ -52,7 +52,7 @@ export type Database = {
         Relationships: [{ foreignKeyName: "job_order_lots_job_order_id_fkey"; columns: ["job_order_id"]; isOneToOne: false; referencedRelation: "job_orders"; referencedColumns: ["id"] }, { foreignKeyName: "job_order_lots_lot_id_fkey"; columns: ["lot_id"]; isOneToOne: false; referencedRelation: "lots"; referencedColumns: ["id"] }]
       }
       job_orders: {
-        Row: { color_plan: Json | null; contract_company: string | null; created_at: string; id: string; is_contract: boolean; job_code: string; lot_id: string | null; model_year: string | null; released_at: string | null; status: Database["public"]["Enums"]["lot_status"]; units: number; vin_sequence: string[] | null }
+        Row: { color_plan: Json | null; contract_company: string | null; created_at: string; id: string; is_contract: boolean; job_code: string; lot_id: string | null; model_year: string | null; released_at: string | null; released_at_cairo: string | null; status: Database["public"]["Enums"]["lot_status"]; units: number; vin_sequence: string[] | null }
         Insert: { color_plan?: Json | null; contract_company?: string | null; created_at?: string; id?: string; is_contract?: boolean; job_code: string; lot_id?: string | null; model_year?: string | null; released_at?: string | null; status?: Database["public"]["Enums"]["lot_status"]; units: number; vin_sequence?: string[] | null }
         Update: { color_plan?: Json | null; contract_company?: string | null; created_at?: string; id?: string; is_contract?: boolean; job_code?: string; lot_id?: string | null; model_year?: string | null; released_at?: string | null; status?: Database["public"]["Enums"]["lot_status"]; units?: number; vin_sequence?: string[] | null }
         Relationships: [{ foreignKeyName: "job_orders_lot_id_fkey"; columns: ["lot_id"]; isOneToOne: false; referencedRelation: "lots"; referencedColumns: ["id"] }]
@@ -94,7 +94,7 @@ export type Database = {
         Relationships: []
       }
       shortages: {
-        Row: { cleared_at: string | null; cleared_by: string | null; created_at: string; created_by: string | null; id: string; notes: string | null; part_type: string | null; parts: string[]; received_by: string | null; released_by: string | null; responsibility: string | null; shortage_reason: string | null; status: Database["public"]["Enums"]["shortage_status"]; vehicle_id: string }
+        Row: { cleared_at: string | null; cleared_at_cairo: string | null; cleared_by: string | null; created_at: string; created_at_cairo: string; created_by: string | null; id: string; notes: string | null; part_type: string | null; parts: string[]; received_by: string | null; released_by: string | null; responsibility: string | null; shortage_reason: string | null; status: Database["public"]["Enums"]["shortage_status"]; vehicle_id: string }
         Insert: { cleared_at?: string | null; cleared_by?: string | null; created_at?: string; created_by?: string | null; id?: string; notes?: string | null; part_type?: string | null; parts: string[]; received_by?: string | null; released_by?: string | null; responsibility?: string | null; shortage_reason?: string | null; status?: Database["public"]["Enums"]["shortage_status"]; vehicle_id: string }
         Update: { cleared_at?: string | null; cleared_by?: string | null; created_at?: string; created_by?: string | null; id?: string; notes?: string | null; part_type?: string | null; parts?: string[]; received_by?: string | null; released_by?: string | null; responsibility?: string | null; shortage_reason?: string | null; status?: Database["public"]["Enums"]["shortage_status"]; vehicle_id?: string }
         Relationships: [{ foreignKeyName: "shortages_vehicle_id_fkey"; columns: ["vehicle_id"]; isOneToOne: false; referencedRelation: "vehicles"; referencedColumns: ["id"] }]
@@ -118,7 +118,7 @@ export type Database = {
         Relationships: []
       }
       station_events: {
-        Row: { color_used_id: string | null; id: string; kind: Database["public"]["Enums"]["event_kind"]; meta: Json | null; recorded_at: string; recorded_by: string | null; source: string; station: Database["public"]["Enums"]["station_code"]; vehicle_id: string }
+        Row: { color_used_id: string | null; id: string; kind: Database["public"]["Enums"]["event_kind"]; meta: Json | null; recorded_at: string; recorded_at_cairo: string; recorded_by: string | null; source: string; station: Database["public"]["Enums"]["station_code"]; vehicle_id: string }
         Insert: { color_used_id?: string | null; id?: string; kind: Database["public"]["Enums"]["event_kind"]; meta?: Json | null; recorded_at?: string; recorded_by?: string | null; source?: string; station: Database["public"]["Enums"]["station_code"]; vehicle_id: string }
         Update: { color_used_id?: string | null; id?: string; kind?: Database["public"]["Enums"]["event_kind"]; meta?: Json | null; recorded_at?: string; recorded_by?: string | null; source?: string; station?: Database["public"]["Enums"]["station_code"]; vehicle_id?: string }
         Relationships: [{ foreignKeyName: "station_events_color_used_id_fkey"; columns: ["color_used_id"]; isOneToOne: false; referencedRelation: "standard_colors"; referencedColumns: ["id"] }, { foreignKeyName: "station_events_vehicle_id_fkey"; columns: ["vehicle_id"]; isOneToOne: false; referencedRelation: "vehicles"; referencedColumns: ["id"] }]
@@ -136,7 +136,7 @@ export type Database = {
         Relationships: []
       }
       vehicle_restrictions: {
-        Row: { cleared_at: string | null; cleared_by: string | null; created_at: string | null; created_by: string | null; id: string; job_order_id: string | null; notes: string | null; restriction: string; status: string; stop_at_station: Database["public"]["Enums"]["station_code"]; vehicle_id: string }
+        Row: { cleared_at: string | null; cleared_by: string | null; created_at: string | null; created_at_cairo: string | null; created_by: string | null; id: string; job_order_id: string | null; notes: string | null; restriction: string; status: string; stop_at_station: Database["public"]["Enums"]["station_code"]; vehicle_id: string }
         Insert: { cleared_at?: string | null; cleared_by?: string | null; created_at?: string | null; created_by?: string | null; id?: string; job_order_id?: string | null; notes?: string | null; restriction: string; status?: string; stop_at_station: Database["public"]["Enums"]["station_code"]; vehicle_id: string }
         Update: { cleared_at?: string | null; cleared_by?: string | null; created_at?: string | null; created_by?: string | null; id?: string; job_order_id?: string | null; notes?: string | null; restriction?: string; status?: string; stop_at_station?: Database["public"]["Enums"]["station_code"]; vehicle_id?: string }
         Relationships: [{ foreignKeyName: "vehicle_restrictions_job_order_id_fkey"; columns: ["job_order_id"]; isOneToOne: false; referencedRelation: "job_orders"; referencedColumns: ["id"] }, { foreignKeyName: "vehicle_restrictions_vehicle_id_fkey"; columns: ["vehicle_id"]; isOneToOne: false; referencedRelation: "vehicles"; referencedColumns: ["id"] }]
@@ -159,13 +159,15 @@ export type Database = {
       archive_completed_vehicles: { Args: never; Returns: undefined }
       decrease_producible: { Args: { count_input: number; lot_id_input: string }; Returns: undefined }
       get_daily_status_data: { Args: never; Returns: Json }
-      get_production_events: { Args: { p_from: string; p_to: string }; Returns: { recorded_at: string; station: Database["public"]["Enums"]["station_code"]; kind: Database["public"]["Enums"]["event_kind"]; vehicle_id: string | null; vin: string | null; vin_suffix: string | null; model: string | null; archived: boolean }[] }
-      get_delayed_vehicles: { Args: { threshold_days?: number }; Returns: { current_station: string; entered_at: string; job_order_id: string; lot_code: string; lot_model: string; vehicle_id: string; vin: string; vin_suffix: string; working_days_at_station: number; working_hours_at_station: number }[] }
-      get_wip_working_hours: { Args: { station_codes: string[] }; Returns: { vehicle_id: string; entered_at: string; working_hours: number; working_days: number }[] }
+      get_production_events: { Args: { p_from: string; p_to: string }; Returns: { recorded_at: string; recorded_at_cairo: string; station: Database["public"]["Enums"]["station_code"]; kind: Database["public"]["Enums"]["event_kind"]; vehicle_id: string | null; vin: string | null; vin_suffix: string | null; model: string | null; archived: boolean }[] }
+      get_delayed_vehicles: { Args: { threshold_days?: number }; Returns: { current_station: string; entered_at: string; entered_at_cairo: string; job_order_id: string; lot_code: string; lot_model: string; vehicle_id: string; vin: string; vin_suffix: string; working_days: number; working_hours: number }[] }
+      get_station_stays: { Args: { station_codes: string[]; p_from?: string; p_to?: string }; Returns: { vehicle_id: string; vin: string; station: string; model: string; entered_at: string; entered_at_cairo: string; exited_at: string; exited_at_cairo: string; working_hours: number; working_days: number }[] }
+      get_wip_working_hours: { Args: { station_codes: string[] }; Returns: { vehicle_id: string; entered_at: string; entered_at_cairo: string; working_hours: number; working_days: number }[] }
       get_home_stats: { Args: never; Returns: Json }
       has_role: { Args: { _role: Database["public"]["Enums"]["app_role"]; _user_id: string }; Returns: boolean }
       has_station_access: { Args: { _station: Database["public"]["Enums"]["station_code"]; _user_id: string }; Returns: boolean }
       mark_stale_offline: { Args: never; Returns: undefined }
+      server_now_ms: { Args: never; Returns: number }
       set_user_offline: { Args: { p_user_id: string }; Returns: undefined }
       touch_presence_heartbeat: { Args: { p_user_id: string }; Returns: undefined }
     }

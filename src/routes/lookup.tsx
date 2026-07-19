@@ -12,6 +12,7 @@ import { useState, useEffect, useMemo } from "react";
 import { findBySuffix, stripVinStars } from "@/lib/vin";
 import { findEngineBySuffix } from "@/lib/engine";
 import type { VehicleSearchResult, EngineSearchResult, Model, ModelTrim } from "@/lib/db-types";
+import { serverNowMs } from "@/lib/time";
 import { supabase } from "@/integrations/supabase/client";
 import { stationByCode, STATIONS } from "@/lib/stations";
 import { useColors } from "@/hooks/use-colors";
@@ -57,9 +58,9 @@ function VehicleLookup() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<VehicleSearchResult[]>([]);
   const [selected, setSelected] = useState<VehicleSearchResult | null>(null);
-  const [events, setEvents] = useState<{ id: string; station: string; kind: string; color_used_id: string | null; recorded_at: string }[]>([]);
-  const [shortageHistory, setShortageHistory] = useState<{ id: string; parts: string[]; shortage_reason: string | null; status: string; created_at: string; cleared_at: string | null }[]>([]);
-  const [issueHistory, setIssueHistory] = useState<{ id: string; title: string; status: string; station: string; created_at: string }[]>([]);
+  const [events, setEvents] = useState<{ id: string; station: string; kind: string; color_used_id: string | null; recorded_at: string; recorded_at_cairo: string }[]>([]);
+  const [shortageHistory, setShortageHistory] = useState<{ id: string; parts: string[]; shortage_reason: string | null; status: string; created_at: string; created_at_cairo: string; cleared_at: string | null; cleared_at_cairo: string | null }[]>([]);
+  const [issueHistory, setIssueHistory] = useState<{ id: string; title: string; status: string; station: string; created_at: string; created_at_cairo: string }[]>([]);
 
   const handleSearch = async () => {
     const q = query.trim();
@@ -105,17 +106,17 @@ function VehicleLookup() {
     const [evRes, shRes, issRes] = await Promise.all([
       supabase
         .from("station_events")
-        .select("id, station, kind, color_used_id, recorded_at")
+        .select("id, station, kind, color_used_id, recorded_at, recorded_at_cairo")
         .eq("vehicle_id", v.id)
         .order("recorded_at", { ascending: true }),
       supabase
         .from("shortages")
-        .select("id, parts, shortage_reason, status, created_at, cleared_at")
+        .select("id, parts, shortage_reason, status, created_at, created_at_cairo, cleared_at, cleared_at_cairo")
         .eq("vehicle_id", v.id)
         .order("created_at", { ascending: true }),
       supabase
         .from("issues")
-        .select("id, title, status, station, created_at")
+        .select("id, title, status, station, created_at, created_at_cairo")
         .eq("vehicle_id", v.id)
         .order("created_at", { ascending: true }),
     ]);
@@ -126,31 +127,28 @@ function VehicleLookup() {
 
   // Group events by station, pair IN/OUT
   const stationTimeline = useMemo(() => {
-    const stations: { station: string; inTime: string | null; outTime: string | null; color: string | null }[] = [];
-    const stationMap = new Map<string, { station: string; inTime: string | null; outTime: string | null; color: string | null }>();
+    const stations: { station: string; inTime: string | null; outTime: string | null; inTimeCairo: string | null; outTimeCairo: string | null; color: string | null }[] = [];
+    const stationMap = new Map<string, { station: string; inTime: string | null; outTime: string | null; inTimeCairo: string | null; outTimeCairo: string | null; color: string | null }>();
 
     events.forEach(e => {
       const key = e.station;
       if (!stationMap.has(key)) {
-        const entry = { station: e.station, inTime: null as string | null, outTime: null as string | null, color: e.color_used_id };
+        const entry = { station: e.station, inTime: null as string | null, outTime: null as string | null, inTimeCairo: null as string | null, outTimeCairo: null as string | null, color: e.color_used_id };
         stationMap.set(key, entry);
         stations.push(entry);
       }
       const entry = stationMap.get(key)!;
-      if (e.kind === "in") entry.inTime = e.recorded_at;
-      if (e.kind === "out") entry.outTime = e.recorded_at;
+      if (e.kind === "in") { entry.inTime = e.recorded_at; entry.inTimeCairo = e.recorded_at_cairo; }
+      if (e.kind === "out") { entry.outTime = e.recorded_at; entry.outTimeCairo = e.recorded_at_cairo; }
     });
     return stations;
   }, [events]);
 
-  const fmtTime = (iso: string | null) => {
-    if (!iso) return "—";
-    return new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-  };
+  const fmtTime = (cairo: string | null) => cairo ?? "—";
 
   const fmtDuration = (inTime: string | null, outTime: string | null) => {
     if (!inTime) return "—";
-    const end = outTime ? new Date(outTime).getTime() : Date.now();
+    const end = outTime ? new Date(outTime).getTime() : serverNowMs();
     const ms = end - new Date(inTime).getTime();
     const hours = Math.floor(ms / 3600000);
     const mins = Math.floor((ms % 3600000) / 60000);
@@ -226,10 +224,10 @@ function VehicleLookup() {
                       <div key={i} className="px-3 py-2 grid grid-cols-4 gap-2 text-xs items-center">
                         <div className="font-medium">{stationByCode(s.station)?.label ?? s.station}</div>
                         <div className="text-muted-foreground">
-                          <span className="text-blue-600">IN</span> {fmtTime(s.inTime)}
+                          <span className="text-blue-600">IN</span> {fmtTime(s.inTimeCairo)}
                         </div>
                         <div className="text-muted-foreground">
-                          <span className="text-green-600">OUT</span> {fmtTime(s.outTime) ?? "—"}
+                          <span className="text-green-600">OUT</span> {fmtTime(s.outTimeCairo) ?? "—"}
                         </div>
                         <div className="font-medium text-right">
                           {fmtDuration(s.inTime, s.outTime)}
@@ -259,7 +257,7 @@ function VehicleLookup() {
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge variant={i.status === "open" ? "destructive" : "success"} className="text-[10px] px-1.5">{i.status}</Badge>
-                        <span className="text-muted-foreground">{new Date(i.created_at).toLocaleDateString("en-GB")}</span>
+                        <span className="text-muted-foreground">{i.created_at_cairo ?? "—"}</span>
                       </div>
                     </li>
                   ))}
@@ -283,8 +281,8 @@ function VehicleLookup() {
                         </div>
                       </div>
                       <div className="text-muted-foreground mt-0.5">
-                        {s.shortage_reason ?? "—"} · Logged {new Date(s.created_at).toLocaleDateString("en-GB")}
-                        {s.cleared_at && ` · Cleared ${new Date(s.cleared_at).toLocaleDateString("en-GB")}`}
+                        {s.shortage_reason ?? "—"} · Logged {s.created_at_cairo ?? "—"}
+                        {s.cleared_at && ` · Cleared ${s.cleared_at_cairo ?? "—"}`}
                       </div>
                     </li>
                   ))}

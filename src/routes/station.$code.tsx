@@ -81,8 +81,10 @@ interface IssueRow {
   status: string;
   reported_by: string | null;
   resolved_at: string | null;
+  resolved_at_cairo: string | null;
   resolved_by: string | null;
   created_at: string;
+  created_at_cairo: string;
 }
 
 function VehicleConditionSection({ vehicleId, station }: { vehicleId: string; station: StationCode }) {
@@ -96,7 +98,7 @@ function VehicleConditionSection({ vehicleId, station }: { vehicleId: string; st
   const loadIssues = async () => {
     const { data } = await supabase
       .from("issues")
-      .select("id,title,severity,status,created_at,resolved_at,resolved_by,reported_by,station")
+      .select("id,title,severity,status,created_at,created_at_cairo,resolved_at,resolved_at_cairo,resolved_by,reported_by,station")
       .eq("vehicle_id", vehicleId)
       .order("created_at", { ascending: false });
     setIssues((data as IssueRow[]) ?? []);
@@ -211,7 +213,7 @@ function VehicleConditionSection({ vehicleId, station }: { vehicleId: string; st
                   <span className="truncate">{issue.title}</span>
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5">
-                  {new Date(issue.created_at).toLocaleString()}
+                  {issue.created_at_cairo ?? "—"}
                 </div>
               </div>
               <Button variant="ghost" size="sm" className="shrink-0 text-xs" onClick={() => handleResolve(issue.id)}>
@@ -232,7 +234,7 @@ function VehicleConditionSection({ vehicleId, station }: { vehicleId: string; st
               <li key={issue.id} className="px-3 py-1.5 flex items-center justify-between text-xs text-muted-foreground">
                 <span className="truncate">{issue.title}</span>
                 <span className="shrink-0 ml-2">
-                  {issue.resolved_at ? new Date(issue.resolved_at).toLocaleTimeString() : ""}
+                  {issue.resolved_at_cairo ?? ""}
                 </span>
               </li>
             ))}
@@ -929,7 +931,7 @@ function RecentEvents({ station }: { station: StationCode }) {
     const load = async () => {
       setLoading(true);
       const { data } = await supabase.from("station_events")
-        .select("id, kind, color_used_id, recorded_at, meta, vehicle:vehicles(vin)")
+        .select("id, kind, color_used_id, recorded_at, recorded_at_cairo, meta, vehicle:vehicles(vin)")
         .eq("station", station).order("recorded_at", { ascending: false }).limit(8);
       if (!cancelled) { setRows(data ?? []); setLoading(false); }
     };
@@ -969,7 +971,7 @@ function RecentEvents({ station }: { station: StationCode }) {
                     {meta?.quality === "issue" && <Badge variant="warning" className="text-[10px] px-1">Issue</Badge>}
                     {meta?.condition && meta.condition !== "ok" && <Badge variant="warning" className="text-[10px] px-1">{meta.condition}</Badge>}
                   </div>
-                  <span className="text-xs text-muted-foreground shrink-0">{new Date(r.recorded_at).toLocaleTimeString()}</span>
+                  <span className="text-xs text-muted-foreground shrink-0">{r.recorded_at_cairo ?? "—"}</span>
                 </li>
               );
             })}
@@ -1225,7 +1227,9 @@ interface ShortageRecord {
   status: string;
   notes: string | null;
   created_at: string;
+  created_at_cairo: string;
   cleared_at: string | null;
+  cleared_at_cairo: string | null;
 }
 
 function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?: VehicleSearchResult | null; onAutoPickedConsumed?: () => void }) {
@@ -1273,7 +1277,7 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
     let cancel = false;
     const load = async () => {
       const { data } = await supabase.from("shortages")
-        .select("id, parts, part_type, responsibility, received_by, released_by, shortage_reason, status, notes, created_at, cleared_at")
+        .select("id, parts, part_type, responsibility, received_by, released_by, shortage_reason, status, notes, created_at, created_at_cairo, cleared_at, cleared_at_cairo")
         .eq("vehicle_id", picked.id)
         .order("created_at", { ascending: false });
       if (!cancel) {
@@ -1472,7 +1476,7 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
                           <div className="flex gap-1.5"><Badge variant={s.part_type === "ckd" ? "info" : "secondary"} className="text-[10px] px-1.5">{s.part_type === "ckd" ? "CKD" : "Local"}</Badge><Badge variant={s.responsibility === "afa" ? "warning" : "muted"} className="text-[10px] px-1.5">{s.responsibility === "afa" ? "Against AFA" : "Against Supplier"}</Badge></div>
                           {s.received_by && <div className="text-xs text-muted-foreground">Received by: {s.received_by}</div>}
                           {s.notes && <div className="text-xs text-muted-foreground">{s.notes}</div>}
-                          <div className="text-[10px] text-muted-foreground">{new Date(s.created_at).toLocaleString()}</div>
+                          <div className="text-[10px] text-muted-foreground">{s.created_at_cairo ?? "—"}</div>
                         </div>
                         <ShortageClearButton onClear={(sig) => clearShortage(s.id, sig)} disabled={busy} />
                       </div>
@@ -1500,7 +1504,7 @@ function ShortageStationView({ autoPicked, onAutoPickedConsumed }: { autoPicked?
                             <span className="font-bold text-muted-foreground">Cycle {cycleNum}</span>
                             <Badge variant={s.status === "open" ? "destructive" : "success"} className="text-[10px] px-1.5">{s.status === "open" ? "OPEN" : "CLEARED"}</Badge>
                           </div>
-                          <span className="text-muted-foreground">{new Date(s.created_at).toLocaleDateString("en-GB")} {s.cleared_at ? `→ ${new Date(s.cleared_at).toLocaleDateString("en-GB")}` : "(current)"}</span>
+                          <span className="text-muted-foreground">{s.created_at_cairo ?? "—"} {s.cleared_at ? `→ ${s.cleared_at_cairo ?? "—"}` : "(current)"}</span>
                         </div>
                         <div className="font-mono">{currentParts.join(", ")}</div>
                         {(added.length > 0 || removed.length > 0) && (

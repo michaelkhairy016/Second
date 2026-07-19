@@ -52,7 +52,7 @@ export type ShortageWithVehicle = Shortage & {
   vehicle: Pick<Vehicle, "vin" | "current_station"> | null;
 };
 
-export type StationEventWithVehicle = Pick<StationEvent, "id" | "kind" | "color_used_id" | "recorded_at" | "meta"> & {
+export type StationEventWithVehicle = Pick<StationEvent, "id" | "kind" | "color_used_id" | "recorded_at" | "recorded_at_cairo" | "meta"> & {
   vehicle: { vin: string } | null;
 };
 

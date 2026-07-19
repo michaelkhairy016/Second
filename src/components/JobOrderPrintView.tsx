@@ -1,5 +1,6 @@
 import type { JobOrder, Lot, Engine } from "@/lib/db-types";
 import type { StandardColor } from "@/hooks/use-colors";
+import { cairoDateLabel, serverNowMs } from "@/lib/time";
 
 interface Props {
   jobOrder: JobOrder;
@@ -102,13 +103,8 @@ export function JobOrderPrintView({
   }
 
   const totalPages = vinPages.length + enginePages.length;
-  const date = jobOrder.released_at
-    ? new Date(jobOrder.released_at).toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      })
-    : new Date().toLocaleDateString("en-GB", {
+  const date = cairoDateLabel(jobOrder.released_at_cairo)
+    ?? new Date(serverNowMs()).toLocaleDateString("en-GB", {
         day: "2-digit",
         month: "short",
         year: "numeric",

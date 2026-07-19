@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { Check, Inbox, Loader2, X, History, ArrowLeft, LayoutDashboard, Truck } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AccessRequestWithProfile, StationCode, AppRole } from "@/lib/db-types";
+import { serverNowMs } from "@/lib/time";
 
 interface AdminUser {
   id: string;
@@ -160,6 +161,7 @@ type ActivityEvent = {
   station: string;
   kind: string;
   recorded_at: string;
+  recorded_at_cairo: string;
   source: string | null;
   vehicle: { vin: string } | null;
   recorder: { display_name: string } | null;
@@ -172,6 +174,7 @@ type ActivityShortage = {
   status: string;
   shortage_reason: string | null;
   created_at: string;
+  created_at_cairo: string;
   cleared_at: string | null;
   vehicle: { vin: string } | null;
   creator: { display_name: string } | null;
@@ -186,18 +189,18 @@ function ActivityLog() {
   const [tab, setTab] = useState<"events" | "shortages">("events");
 
   // Only fetch last 3 days of data to save quota
-  const threeDaysAgo = new Date(Date.now() - 3 * 86400000).toISOString();
+  const threeDaysAgo = new Date(serverNowMs() - 3 * 86400000).toISOString();
 
   const reload = async () => {
     setLoading(true);
     const [evRes, shRes] = await Promise.all([
       supabase.from("station_events")
-        .select("id, station, kind, recorded_at, source, vehicle:vehicles(vin), recorder:profiles!station_events_profiles_recorded_by_fkey(display_name), color:standard_colors!station_events_color_used_id_fkey(code, name)")
+        .select("id, station, kind, recorded_at, recorded_at_cairo, source, vehicle:vehicles(vin), recorder:profiles!station_events_profiles_recorded_by_fkey(display_name), color:standard_colors!station_events_color_used_id_fkey(code, name)")
         .gte("recorded_at", threeDaysAgo)
         .order("recorded_at", { ascending: false })
         .limit(150),
       supabase.from("shortages")
-        .select("id, parts, status, shortage_reason, created_at, cleared_at, vehicle:vehicles(vin), creator:profiles!shortages_profiles_created_by_fkey(display_name), clearer:profiles!shortages_profiles_cleared_by_fkey(display_name)")
+        .select("id, parts, status, shortage_reason, created_at, created_at_cairo, cleared_at, vehicle:vehicles(vin), creator:profiles!shortages_profiles_created_by_fkey(display_name), clearer:profiles!shortages_profiles_cleared_by_fkey(display_name)")
         .gte("created_at", threeDaysAgo)
         .order("created_at", { ascending: false })
         .limit(80),
@@ -252,7 +255,7 @@ function ActivityLog() {
                 <tbody className="divide-y">
                   {filteredEvents.map(e => (
                     <tr key={e.id}>
-                      <td className="p-2 whitespace-nowrap">{new Date(e.recorded_at).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
+                      <td className="p-2 whitespace-nowrap">{e.recorded_at_cairo ?? "—"}</td>
                       <td className="p-2 font-mono">{e.vehicle?.vin ?? "—"}</td>
                       <td className="p-2">{stationByCode(e.station)?.label ?? e.station}</td>
                       <td className="p-2"><Badge variant={e.kind === "in" ? "info" : "success"} className="text-[10px] px-1">{e.kind.toUpperCase()}</Badge></td>
@@ -285,7 +288,7 @@ function ActivityLog() {
                 <tbody className="divide-y">
                   {filteredShortages.map(s => (
                     <tr key={s.id}>
-                      <td className="p-2 whitespace-nowrap">{new Date(s.created_at).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
+                      <td className="p-2 whitespace-nowrap">{s.created_at_cairo ?? "—"}</td>
                       <td className="p-2 font-mono">{s.vehicle?.vin ?? "—"}</td>
                       <td className="p-2 max-w-[200px] truncate">{(s.parts as string[]).join(", ")}</td>
                       <td className="p-2">{s.shortage_reason ?? "—"}</td>
@@ -323,7 +326,7 @@ function formatDuration(seconds: number): string {
 
 function formatRelative(iso: string | null): string {
   if (!iso) return "—";
-  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  const s = (serverNowMs() - new Date(iso).getTime()) / 1000;
   if (s < 0) return "just now";
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
@@ -334,7 +337,7 @@ function formatRelative(iso: string | null): string {
 // Online status derived from heartbeat recency (social-media style).
 function presenceStatus(iso: string | null, isOnline: boolean): { label: string; tone: "online" | "idle" | "offline" } {
   if (!iso) return { label: "Never", tone: "offline" };
-  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  const s = (serverNowMs() - new Date(iso).getTime()) / 1000;
   if (isOnline && s < 120) return { label: "Active now", tone: "online" };
   if (s < 300) return { label: `Active ${Math.floor(s / 60)}m ago`, tone: "idle" };
   return { label: "Offline", tone: "offline" };
@@ -357,7 +360,7 @@ function PresencePanel() {
   const reload = async () => {
     setLoading(true);
     await supabase.rpc("mark_stale_offline");
-    const since3d = new Date(Date.now() - 3 * 86400000).toISOString();
+    const since3d = new Date(serverNowMs() - 3 * 86400000).toISOString();
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
     const todayISO = todayStart.toISOString();
 
@@ -514,6 +517,7 @@ type ContractLogEntry = {
   contract_model: string;
   released_from: string;
   released_at: string;
+  released_at_cairo: string;
   released_by: string | null;
   releaser: { display_name: string } | null;
 };
@@ -530,7 +534,7 @@ function ContractProductionPanel() {
     setLoading(true);
     const { data, error } = await supabase
       .from("contract_vehicle_log")
-      .select("id, vin, vin_suffix, contract_model, released_from, released_at, released_by, releaser:profiles(display_name)")
+      .select("id, vin, vin_suffix, contract_model, released_from, released_at, released_at_cairo, released_by, releaser:profiles(display_name)")
       .gte("released_at", `${monthFilter}-01T00:00:00`)
       .lt("released_at", (() => { const [y, m] = monthFilter.split("-").map(Number); const next = new Date(y, m, 1); return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-01T00:00:00`; })())
       .order("released_at", { ascending: false });
@@ -602,7 +606,7 @@ function ContractProductionPanel() {
                 <tbody className="divide-y">
                   {logs.map(l => (
                     <tr key={l.id}>
-                      <td className="p-2 whitespace-nowrap">{new Date(l.released_at).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
+                      <td className="p-2 whitespace-nowrap">{l.released_at_cairo ?? "—"}</td>
                       <td className="p-2 font-mono">{l.vin}</td>
                       <td className="p-2"><Badge variant="info" className="text-[10px] px-1">{l.contract_model}</Badge></td>
                       <td className="p-2 capitalize">{l.released_from}</td>

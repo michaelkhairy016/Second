@@ -308,7 +308,7 @@ function Page() {
                               {r.notes && <span className="ml-1">· {r.notes}</span>}
                             </div>
                             <div className="text-[10px] text-muted-foreground mt-0.5">
-                              {r.created_at ? new Date(r.created_at).toLocaleString() : ""}
+                              {r.created_at_cairo ?? ""}
                             </div>
                           </div>
                           <Button size="sm" variant="outline" className="shrink-0" onClick={() => clearRestriction(r.id)}>

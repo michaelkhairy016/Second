@@ -13,6 +13,7 @@ interface Props {
     activeIssues: Issue[];
     resolvedIssues: Issue[];
     enteredAt: string | null;
+    enteredAtCairo: string | null;
     lots: { lot_code: string; model: string } | null;
     job_orders: { model_year: string | null } | null;
   }>;
@@ -77,7 +78,7 @@ export function StationDetailSheet({ stationKey, vehicles, open, onOpenChange }:
                   {v.enteredAt && (
                     <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                       <Clock className="h-3 w-3" />
-                      <span>Entered {new Date(v.enteredAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                      <span>Entered {v.enteredAtCairo ?? "—"}</span>
                       <span>·</span>
                       <span className="font-medium">{formatDuration(v.enteredAt)}</span>
                     </div>

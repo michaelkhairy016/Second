@@ -7,7 +7,12 @@ export function exportToCSV(rows: Record<string, unknown>[], filename: string) {
       headers.map(h => {
         let val = row[h];
         if (typeof val === "string" && /^\d{4}-\d{2}-\d{2}T/.test(val)) {
-          val = new Date(val).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+          // Prefer the Postgres-produced *_cairo text sibling (server-formatted, PC-independent);
+          // fall back to browser Cairo formatting only if no sibling is present.
+          const cairo = row[`${h}_cairo`];
+          val = typeof cairo === "string" && cairo
+            ? cairo
+            : new Date(val).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Africa/Cairo" });
         }
         const str = typeof val === "string" ? val : JSON.stringify(val ?? "");
         return `"${str.replace(/"/g, '""')}"`;

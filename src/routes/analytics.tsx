@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, Cell, LineChart, Line, Legend } from "recharts";
 import { useColors } from "@/hooks/use-colors";
 import type { ProductionPlan } from "@/lib/db-types";
+import { serverNowMs } from "@/lib/time";
 import { FileDown, Send, Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/analytics")({
@@ -109,7 +110,7 @@ function Page() {
 
     // JPH per station
     const rangeStart_time = rangeStart.getTime();
-    const now_time = Date.now();
+    const now_time = serverNowMs();
     const elapsedHours = Math.max((now_time - rangeStart_time) / (1000 * 60 * 60), 1);
     const jphStations = STATIONS.filter(s => s.code !== "warehouse");
     setJphData(jphStations.map(s => {

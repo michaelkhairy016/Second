@@ -328,6 +328,7 @@ function ShopTable({ title, models, sections }: { title: string; models: string[
 function FlowTab() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [entryMap, setEntryMap] = useState<Record<string, string>>({});
+  const [entryCairoMap, setEntryCairoMap] = useState<Record<string, string>>({});
   const [activeIssues, setActiveIssues] = useState<Record<string, Issue[]>>({});
   const [resolvedIssues, setResolvedIssues] = useState<Record<string, Issue[]>>({});
   const [activeJobOrderIds, setActiveJobOrderIds] = useState<Set<string>>(new Set());
@@ -336,7 +337,7 @@ function FlowTab() {
   const load = useCallback(async () => {
     const [{ data: vs }, { data: ev }, { data: ai }, { data: ri }, { data: jos }] = await Promise.all([
       supabase.from("vehicles").select("id, vin, vin_suffix, current_station, lot_id, job_order_id, planned_color_id, actual_color_id, is_lot_tail, tail_note").is("completed_at", null),
-      supabase.from("station_events").select("vehicle_id, station, recorded_at").eq("kind", "in").order("recorded_at", { ascending: false }),
+      supabase.from("station_events").select("vehicle_id, station, recorded_at, recorded_at_cairo").eq("kind", "in").order("recorded_at", { ascending: false }),
       supabase.from("issues").select("id,title,severity,status,created_at,resolved_at,vehicle_id,station").in("status", ["open", "in_progress"]).limit(200),
       supabase.from("issues").select("id,title,severity,status,created_at,resolved_at,vehicle_id,station").in("status", ["resolved", "closed"]).limit(200),
       supabase.from("job_orders").select("id").eq("status", "active"),
@@ -347,13 +348,16 @@ function FlowTab() {
 
     // Build entry time map
     const map: Record<string, string> = {};
+    const cairoMap: Record<string, string> = {};
     for (const e of (ev ?? [])) {
       const v = vehicles.find(v => v.id === e.vehicle_id);
       if (v && e.station === v.current_station && !map[e.vehicle_id]) {
         map[e.vehicle_id] = e.recorded_at;
+        if (e.recorded_at_cairo) cairoMap[e.vehicle_id] = e.recorded_at_cairo;
       }
     }
     setEntryMap(map);
+    setEntryCairoMap(cairoMap);
 
     const aiMap: Record<string, Issue[]> = {};
     (ai ?? []).forEach(i => { if (i.vehicle_id) (aiMap[i.vehicle_id] ??= []).push(i); });
@@ -391,12 +395,12 @@ function FlowTab() {
     if (selectedStation === "line_feeding") {
       return vehicles
         .filter(v => v.current_station === "line_feeding")
-        .map(v => ({ ...v, activeIssues: activeIssues[v.id] ?? [], resolvedIssues: resolvedIssues[v.id] ?? [], enteredAt: entryMap[v.id] ?? null }));
+        .map(v => ({ ...v, activeIssues: activeIssues[v.id] ?? [], resolvedIssues: resolvedIssues[v.id] ?? [], enteredAt: entryMap[v.id] ?? null, enteredAtCairo: entryCairoMap[v.id] ?? null }));
     }
     return vehicles
       .filter(v => v.current_station === selectedStation)
-      .map(v => ({ ...v, activeIssues: activeIssues[v.id] ?? [], resolvedIssues: resolvedIssues[v.id] ?? [], enteredAt: entryMap[v.id] ?? null }));
-  }, [selectedStation, vehicles, activeJobOrderIds, activeIssues, resolvedIssues, entryMap]);
+      .map(v => ({ ...v, activeIssues: activeIssues[v.id] ?? [], resolvedIssues: resolvedIssues[v.id] ?? [], enteredAt: entryMap[v.id] ?? null, enteredAtCairo: entryCairoMap[v.id] ?? null }));
+  }, [selectedStation, vehicles, activeJobOrderIds, activeIssues, resolvedIssues, entryMap, entryCairoMap]);
 
   return (
     <>
@@ -413,7 +417,7 @@ function FlowTab() {
 
 function WIPTab() {
   const { getCode } = useColors();
-  const [rows, setRows] = useState<{ station: string; count: number; vins: { vin: string; planned_color_id: string | null; actual_color_id: string | null; issues: { title: string; severity: string; status: string }[]; entered_at: string | null }[] }[]>([]);
+  const [rows, setRows] = useState<{ station: string; count: number; vins: { vin: string; planned_color_id: string | null; actual_color_id: string | null; issues: { title: string; severity: string; status: string }[]; entered_at: string | null; entered_at_cairo: string | null }[] }[]>([]);
   const [openShortages, setOpenShortages] = useState(0);
   const [openIssues, setOpenIssues] = useState(0);
 
@@ -426,7 +430,7 @@ function WIPTab() {
           "VIN": v.vin,
           "Planned Color": getCode(v.planned_color_id),
           "Actual Color": getCode(v.actual_color_id),
-          "Entered": v.entered_at ?? "",
+          "Entered": v.entered_at_cairo ?? v.entered_at ?? "",
           "Duration": v.entered_at ? formatDuration(v.entered_at) : "",
           "Issues": v.issues.map(i => `${i.title} (${i.severity})`).join("; ") || "",
         });
@@ -442,7 +446,7 @@ function WIPTab() {
         supabase.from("vehicles").select("id, vin, current_station, planned_color_id, actual_color_id").is("completed_at", null),
         supabase.from("issues").select("id, vehicle_id, title, severity, status").in("status", ["open", "in_progress"]),
         supabase.from("shortages").select("id", { count: "exact", head: true }).eq("status", "open"),
-        supabase.from("station_events").select("vehicle_id, station, recorded_at").eq("kind", "in").order("recorded_at", { ascending: false }),
+        supabase.from("station_events").select("vehicle_id, station, recorded_at, recorded_at_cairo").eq("kind", "in").order("recorded_at", { ascending: false }),
       ]);
       const vs = vsRes.data ?? [];
       setOpenShortages(shortagesRes.count ?? 0);
@@ -487,6 +491,7 @@ function WIPTab() {
             actual_color_id: v.actual_color_id,
             issues: issueMap[v.id] ?? [],
             entered_at: entryMap[v.id] ?? null,
+            entered_at_cairo: entryCairoMap[v.id] ?? null,
           })),
         };
       }));
@@ -532,7 +537,7 @@ function WIPTab() {
                         "VIN": v.vin,
                         "Planned Color": getCode(v.planned_color_id),
                         "Actual Color": getCode(v.actual_color_id),
-                        "Entered": v.entered_at ?? "",
+                        "Entered": v.entered_at_cairo ?? v.entered_at ?? "",
                         "Duration": v.entered_at ? formatDuration(v.entered_at) : "",
                         "Issues": v.issues.map(i => `${i.title} (${i.severity})`).join("; ") || "",
                       }));
@@ -567,7 +572,7 @@ function WIPTab() {
                       <TableCell className="text-xs">{getCode(v.planned_color_id)}</TableCell>
                       <TableCell className="text-xs">{getCode(v.actual_color_id)}</TableCell>
                       <TableCell className="text-xs">
-                        {v.entered_at ? new Date(v.entered_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
+                        {v.entered_at_cairo ?? "—"}
                       </TableCell>
                       <TableCell className="text-xs font-medium">
                         {v.entered_at ? formatDuration(v.entered_at) : "—"}
@@ -605,6 +610,7 @@ interface DelayedVehicle {
   vin_suffix: string;
   current_station: string;
   entered_at: string;
+  entered_at_cairo: string;
   working_days_at_station: number;
   lot_code: string | null;
   lot_model: string | null;
@@ -652,7 +658,7 @@ function DelayedTab() {
       "VIN": v.vin,
       "VIN Suffix": v.vin_suffix,
       "Station": stationByCode(v.current_station as StationCode)?.label ?? v.current_station,
-      "Entered At": v.entered_at,
+      "Entered At": v.entered_at_cairo,
       "Working Days": v.working_days_at_station,
       "Lot Code": v.lot_code ?? "",
       "Model": v.lot_model ?? "",
@@ -730,7 +736,7 @@ function DelayedTab() {
                         {stationByCode(v.current_station as StationCode)?.label ?? v.current_station}
                       </TableCell>
                       <TableCell className="text-xs">
-                        {new Date(v.entered_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        {v.entered_at_cairo ?? "—"}
                       </TableCell>
                       <TableCell className="text-xs font-medium">
                         <Badge variant={v.working_days_at_station - threshold >= 3 ? "destructive" : "secondary"}>
@@ -755,7 +761,7 @@ function LookupTab() {
   const { getCode } = useColors();
   const [suffix, setSuffix] = useState("");
   const [results, setResults] = useState<Awaited<ReturnType<typeof findBySuffix>>>([]);
-  const [vehicleDetails, setVehicleDetails] = useState<Record<string, { issues: { title: string; severity: string; status: string }[]; events: { station: string; kind: string; recorded_at: string }[] }>>({});
+  const [vehicleDetails, setVehicleDetails] = useState<Record<string, { issues: { title: string; severity: string; status: string }[]; events: { station: string; kind: string; recorded_at: string; recorded_at_cairo: string }[] }>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const search = async (s: string) => {
@@ -771,13 +777,13 @@ function LookupTab() {
 
     const [issRes, evRes] = await Promise.all([
       supabase.from("issues").select("title, severity, status").eq("vehicle_id", vehicleId).order("created_at", { ascending: false }),
-      supabase.from("station_events").select("station, kind, recorded_at").eq("vehicle_id", vehicleId).order("recorded_at", { ascending: false }).limit(20),
+      supabase.from("station_events").select("station, kind, recorded_at, recorded_at_cairo").eq("vehicle_id", vehicleId).order("recorded_at", { ascending: false }).limit(20),
     ]);
     setVehicleDetails(prev => ({
       ...prev,
       [vehicleId]: {
         issues: (issRes.data ?? []) as { title: string; severity: string; status: string }[],
-        events: (evRes.data ?? []) as { station: string; kind: string; recorded_at: string }[],
+        events: (evRes.data ?? []) as { station: string; kind: string; recorded_at: string; recorded_at_cairo: string }[],
       },
     }));
   };
@@ -828,7 +834,7 @@ function LookupTab() {
                           <span key={i} className="inline-flex items-center gap-1 text-xs bg-muted rounded px-1.5 py-0.5">
                             <Badge variant={e.kind === "in" ? "info" : "success"} className="text-[10px] px-1 py-0">{e.kind.toUpperCase()}</Badge>
                             {stationByCode(e.station)?.short ?? e.station}
-                            <span className="text-muted-foreground">{new Date(e.recorded_at).toLocaleDateString()}</span>
+                            <span className="text-muted-foreground">{e.recorded_at_cairo ?? "—"}</span>
                           </span>
                         ))
                       )}

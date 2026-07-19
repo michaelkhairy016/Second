@@ -26,6 +26,7 @@ interface DelayedVehicle {
   vin_suffix: string;
   current_station: string;
   entered_at: string;
+  entered_at_cairo: string;
   working_hours_at_station: number;
   working_days_at_station: number;
   lot_code: string | null;
@@ -40,8 +41,8 @@ interface VehicleDetail {
   lot_model: string | null;
   job_order_name: string | null;
   actual_color_id: string | null;
-  issues: { title: string; status: string; station: string; created_at: string }[];
-  shortages: { parts: string[]; status: string; shortage_reason: string | null; created_at: string }[];
+  issues: { title: string; status: string; station: string; created_at: string; created_at_cairo: string }[];
+  shortages: { parts: string[]; status: string; shortage_reason: string | null; created_at: string; created_at_cairo: string }[];
 }
 
 function DelayedPage() {
@@ -141,8 +142,8 @@ function DelayedPage() {
     setDetail(null);
     const [vRes, issRes, shRes, joRes] = await Promise.all([
       supabase.from("vehicles").select("vin, current_station, lot_id, actual_color_id, job_order_id").eq("id", v.vehicle_id).maybeSingle(),
-      supabase.from("issues").select("title, status, station, created_at").eq("vehicle_id", v.vehicle_id).order("created_at", { ascending: false }).limit(10),
-      supabase.from("shortages").select("parts, status, shortage_reason, created_at").eq("vehicle_id", v.vehicle_id).order("created_at", { ascending: false }).limit(5),
+      supabase.from("issues").select("title, status, station, created_at, created_at_cairo").eq("vehicle_id", v.vehicle_id).order("created_at", { ascending: false }).limit(10),
+      supabase.from("shortages").select("parts, status, shortage_reason, created_at, created_at_cairo").eq("vehicle_id", v.vehicle_id).order("created_at", { ascending: false }).limit(5),
       v.job_order_id
         ? supabase.from("job_orders").select("name").eq("id", v.job_order_id).maybeSingle()
         : Promise.resolve({ data: null }),
@@ -178,7 +179,7 @@ function DelayedPage() {
       "VIN": v.vin,
       "VIN Suffix": v.vin_suffix,
       "Station": stationByCode(v.current_station as StationCode)?.label ?? v.current_station,
-      "Entered At": v.entered_at,
+      "Entered At": v.entered_at_cairo,
       "Working Days": v.working_days_at_station,
       "Days Over Threshold": v.working_days_at_station - localThreshold,
       "Lot Code": v.lot_code ?? "",
@@ -277,7 +278,7 @@ function DelayedPage() {
                           {stationByCode(v.current_station as StationCode)?.label ?? v.current_station}
                         </TableCell>
                         <TableCell className="text-xs">
-                          {new Date(v.entered_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                          {v.entered_at_cairo ?? "—"}
                         </TableCell>
                         <TableCell className="text-xs font-mono font-medium">
                           {Math.round(v.working_hours_at_station)}h
@@ -362,7 +363,7 @@ function DelayedPage() {
                           <span>{(s.parts as string[]).join(", ")}</span>
                           <Badge variant={s.status === "open" ? "destructive" : "success"} className="text-[10px] px-1">{s.status}</Badge>
                         </div>
-                        <div className="text-muted-foreground mt-0.5">{s.shortage_reason ?? ""} · {new Date(s.created_at).toLocaleDateString("en-GB")}</div>
+                        <div className="text-muted-foreground mt-0.5">{s.shortage_reason ?? ""} · {s.created_at_cairo ?? "—"}</div>
                       </li>
                     ))}
                   </ul>

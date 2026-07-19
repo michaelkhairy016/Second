@@ -1,14 +1,14 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { serverNowMs } from "@/lib/time";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 export function formatDuration(enteredAt: string): string {
-  const now = new Date();
   const entered = new Date(enteredAt);
-  const diffMs = now.getTime() - entered.getTime();
+  const diffMs = serverNowMs() - entered.getTime();
   if (diffMs < 0) return "0m";
 
   const totalMinutes = Math.floor(diffMs / 60000);
