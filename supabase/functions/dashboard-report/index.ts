@@ -22,6 +22,7 @@ const MODULE_CONFIG: Record<string, { title: string; stations: string[]; color: 
   shortage: { title: "Shortages WIP Status Report", stations: ["shortage"], color: [211, 84, 0] },
   pbs: { title: "PBS WIP Status Report", stations: ["pbs"], color: [39, 174, 96] },
   wbs: { title: "WBS WIP Status Report", stations: ["wbs"], color: [41, 128, 185] },
+  colors: { title: "Color Tracking Report", stations: [], color: [139, 92, 246] },
 };
 
 const REASON_MAP: Record<string, string> = {
@@ -262,6 +263,173 @@ function drawGauge(doc: any, cx: number, cy: number, r: number, pct: number, lab
   doc.text(label, cx, cy + r + 5, { align: "center", baseline: "middle" });
 }
 
+const COLORS_PALETTE: number[][] = [
+  [59, 130, 246], [16, 185, 129], [245, 158, 11], [239, 68, 68],
+  [139, 92, 246], [14, 165, 233], [236, 72, 153], [20, 184, 166],
+  [249, 115, 22], [99, 102, 241], [132, 204, 22], [168, 85, 247],
+];
+const POST_PAINT_STATIONS = ["paint", "pbs", "tcf", "waiting_repair", "repair", "cs", "pdi", "shortage"];
+
+async function buildColorsReport(opts: {
+  sb: any; reportDate: string; isMonthly: boolean;
+  dayStart: string; dayEnd: string; monthStart: string; monthEnd: string;
+  lotMap: Record<string, string>; joModelMap: Record<string, string>;
+  colorMap: Record<string, string>; colorNameMap: Record<string, string>;
+  rangeLabel: string;
+}): Promise<Response> {
+  const { sb, reportDate, isMonthly, dayStart, dayEnd, monthStart, monthEnd, lotMap, joModelMap, colorMap, colorNameMap, rangeLabel } = opts;
+
+  const [vRes, jRes, todayRes, monthRes] = await Promise.all([
+    sb.from("vehicles").select("id, vin, vin_suffix, contract_model, lot_id, job_order_id, actual_color_id, planned_color_id, current_station, completed_at"),
+    sb.from("job_orders").select("id, job_code, color_plan, units, status"),
+    sb.from("station_events").select("vehicle_id, color_used_id, recorded_at").eq("station", "paint").not("color_used_id", "is", null).gte("recorded_at", dayStart).lte("recorded_at", dayEnd).order("recorded_at", { ascending: false }),
+    sb.from("station_events").select("color_used_id").eq("station", "paint").not("color_used_id", "is", null).gte("recorded_at", monthStart).lte("recorded_at", monthEnd),
+  ]);
+
+  const vehicles: any[] = vRes.data ?? [];
+  const jobs: any[] = jRes.data ?? [];
+  const todayEvents: any[] = todayRes.data ?? [];
+  const monthEvents: any[] = monthRes.data ?? [];
+
+  const modelOf = (v: any): string => v.contract_model || (v.lot_id && lotMap[v.lot_id]) || (v.job_order_id && joModelMap[v.job_order_id]) || "Unknown";
+  const vehById: Record<string, any> = {};
+  vehicles.forEach((v: any) => { vehById[v.id] = v; });
+
+  const totalPainted = vehicles.filter((v: any) => v.actual_color_id).length;
+  const activeColors = new Set(vehicles.filter((v: any) => v.actual_color_id).map((v: any) => v.actual_color_id)).size;
+  const backlog = vehicles.filter((v: any) => !v.actual_color_id && POST_PAINT_STATIONS.includes(v.current_station ?? "")).length;
+
+  // Monthly color distribution
+  const monthCounts: Record<string, number> = {};
+  monthEvents.forEach((e: any) => { if (e.color_used_id) monthCounts[e.color_used_id] = (monthCounts[e.color_used_id] ?? 0) + 1; });
+  const monthColorRows = Object.entries(monthCounts)
+    .map(([cid, cnt]) => ({ id: cid, code: colorMap[cid] ?? cid.slice(0, 6), name: colorNameMap[cid] ?? cid.slice(0, 6), count: cnt }))
+    .sort((a, b) => b.count - a.count);
+  const monthPaintedTotal = monthColorRows.reduce((s, r) => s + r.count, 0);
+
+  // Per-job planned vs actual
+  const jobRows = jobs.map((j: any) => {
+    const plan = (j.color_plan && typeof j.color_plan === "object") ? j.color_plan as Record<string, number> : {};
+    const actualByColor: Record<string, number> = {};
+    let actualTotal = 0;
+    vehicles.filter((v: any) => v.job_order_id === j.id && v.actual_color_id).forEach((v: any) => {
+      actualByColor[v.actual_color_id] = (actualByColor[v.actual_color_id] ?? 0) + 1; actualTotal++;
+    });
+    const plannedTotal = Object.values(plan).reduce((a, b) => a + (Number(b) || 0), 0);
+    const ids = Array.from(new Set([...Object.keys(plan), ...Object.keys(actualByColor)]));
+    const perColor = ids.map(cid => `${colorMap[cid] ?? cid.slice(0,6)}:${Number(plan[cid])||0}/${actualByColor[cid] ?? 0}`).join("  ");
+    const compliance = plannedTotal > 0 ? Math.round((actualTotal / plannedTotal) * 100) : (actualTotal > 0 ? 100 : 0);
+    return { jobCode: j.job_code, planned: plannedTotal, actual: actualTotal, compliance, perColor };
+  }).filter((r: any) => r.planned > 0 || r.actual > 0).sort((a: any, b: any) => b.actual - a.actual);
+  const plannedAll = jobRows.reduce((s: number, r: any) => s + r.planned, 0);
+  const actualAll = jobRows.reduce((s: number, r: any) => s + r.actual, 0);
+  const overallCompliance = plannedAll > 0 ? Math.round((actualAll / plannedAll) * 100) : 0;
+
+  // === PDF ===
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const hasArabicFont = await loadArabicFont(doc);
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const ACCENT = [139, 92, 246];
+  const ts = new Date().toLocaleString("en-GB", { timeZone: "Africa/Cairo" });
+
+  // Header
+  doc.setFillColor(30, 41, 59); doc.rect(0, 0, pageWidth, 22, "F");
+  doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(16);
+  doc.text("AFA Shopfloor — Color Tracking Report", 14, 10);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(203, 213, 225);
+  doc.text(`${rangeLabel}  ·  Generated ${ts}`, 14, 17);
+
+  let y = 30;
+  // KPI cards
+  const kpis = [
+    { label: "Total Painted", value: String(totalPainted), color: [59, 130, 246] },
+    { label: "Overall Compliance", value: `${overallCompliance}%`, color: [16, 185, 129] },
+    { label: "Pending Unpainted", value: String(backlog), color: [245, 158, 11] },
+    { label: "Active Colors", value: String(activeColors), color: ACCENT },
+    { label: "Painted This Month", value: String(monthPaintedTotal), color: [236, 72, 153] },
+  ];
+  const cardW = (pageWidth - 28 - (kpis.length - 1) * 4) / kpis.length;
+  kpis.forEach((k, i) => {
+    const cx = 14 + i * (cardW + 4);
+    doc.setFillColor(245, 247, 250); doc.roundedRect(cx, y, cardW, 18, 2, 2, "F");
+    doc.setFontSize(7); doc.setTextColor(100, 116, 139); doc.setFont("helvetica", "normal");
+    doc.text(k.label.toUpperCase(), cx + 3, y + 5);
+    doc.setFontSize(14); doc.setFont("helvetica", "bold"); doc.setTextColor(k.color[0], k.color[1], k.color[2]);
+    doc.text(k.value, cx + 3, y + 14);
+  });
+  y += 26;
+
+  // Colors today table (day report only)
+  if (!isMonthly) {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(30, 41, 59);
+    doc.text(`Colors Assigned Today (${todayEvents.length})`, 14, y);
+    y += 3;
+    const rows = todayEvents.map((e: any) => {
+      const v = vehById[e.vehicle_id];
+      return [formatDateTime(e.recorded_at), v?.vin ?? "—", v ? modelOf(v) : "Unknown", `${colorNameMap[e.color_used_id] ?? "—"} (${colorMap[e.color_used_id] ?? "—"})`];
+    });
+    (autotable as any)(doc, {
+      startY: y,
+      head: [["Time", "VIN", "Model", "Color"]],
+      body: rows.length ? rows : [["—", "No colors assigned today", "", ""]],
+      theme: "grid",
+      styles: { fontSize: 8, cellPadding: 1.5 },
+      headStyles: { fillColor: ACCENT, textColor: 255 },
+      columnStyles: { 0: { cellWidth: 45 }, 1: { cellWidth: 60 } },
+      didParseCell: (data: any) => {
+        if (hasArabicFont && data.section === "body" && data.column.index === 2) {
+          const t = data.cell.raw; if (t && hasArabic(String(t))) data.cell.styles.font = "Amiri";
+        }
+      },
+    });
+    // @ts-ignore lastAutoTable
+    y = (doc as any).lastAutoTable.finalY + 8;
+  }
+
+  // Monthly color distribution bar chart
+  doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(30, 41, 59);
+  doc.text(`Color Distribution — ${reportDate.slice(0, 7)}`, 14, y);
+  y += 3;
+  const chartData = monthColorRows.map((r, i) => ({ label: `${r.code} (${r.name})`, value: r.count, color: COLORS_PALETTE[i % COLORS_PALETTE.length] }));
+  if (chartData.length > 0) drawBarChart(doc, 14, y, pageWidth - 28, Math.min(8 * chartData.length + 6, 70), chartData);
+  y += Math.min(8 * chartData.length + 6, 70) + 4;
+  if (y > pageHeight - 40) { doc.addPage(); y = 20; }
+
+  // Per-job compliance table
+  doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(30, 41, 59);
+  doc.text("Planned vs Actual per Job Order", 14, y);
+  y += 3;
+  (autotable as any)(doc, {
+    startY: y,
+    head: [["Job Code", "Planned", "Actual", "Compliance %", "Per Color (planned/actual)"]],
+    body: jobRows.length ? jobRows.map((r: any) => [r.jobCode, String(r.planned), String(r.actual), `${r.compliance}%`, r.perColor]) : [["—", "No job orders with color plans", "", "", ""]],
+    theme: "grid",
+    styles: { fontSize: 8, cellPadding: 1.5 },
+    headStyles: { fillColor: ACCENT, textColor: 255 },
+    columnStyles: { 0: { cellWidth: 40 }, 1: { cellWidth: 22, halign: "center" }, 2: { cellWidth: 22, halign: "center" }, 3: { cellWidth: 30, halign: "center" } },
+  });
+
+  // Footer
+  const pageCount = doc.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7); doc.setFont("helvetica", "normal"); doc.setTextColor(148, 163, 184);
+    doc.text(`AFA Shopfloor — Color Tracking Report — Generated ${ts}`, 14, pageHeight - 7);
+    doc.text(`Page ${i} of ${pageCount}`, pageWidth - 14, pageHeight - 7, { align: "right" });
+    doc.text("Created By Michael Amgad Khairy - Planning Section", pageWidth / 2, pageHeight - 3, { align: "center" });
+  }
+
+  const pdfBytes = doc.output("arraybuffer");
+  return new Response(pdfBytes, {
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="colors-report-${reportDate}.pdf"`,
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, {
@@ -307,10 +475,15 @@ Deno.serve(async (req: Request) => {
       if (!joModelMap[jol.job_order_id] && lotMap[jol.lot_id]) joModelMap[jol.job_order_id] = lotMap[jol.lot_id];
     });
 
-    const { data: colorsData } = await sb.from("standard_colors").select("id, code");
+    const { data: colorsData } = await sb.from("standard_colors").select("id, code, name");
     const colorMap: Record<string, string> = {};
-    (colorsData ?? []).forEach((c: any) => { colorMap[c.id] = c.code; });
+    const colorNameMap: Record<string, string> = {};
+    (colorsData ?? []).forEach((c: any) => { colorMap[c.id] = c.code; colorNameMap[c.id] = c.name; });
 
+    // === DEDICATED COLORS REPORT (early return — does not run WIP assembly) ===
+    if (m === "colors") {
+      return await buildColorsReport({ sb, reportDate, isMonthly, dayStart, dayEnd, monthStart, monthEnd, lotMap, joModelMap, colorMap, colorNameMap, rangeLabel });
+    }
     // === BRANCH: DAY vs MONTHLY data assembly ===
     let wipVehicles: WipVehicle[] = [];
     let categories: { name: string; vehicles: typeof wipVehicles }[] = [];

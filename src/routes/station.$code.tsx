@@ -437,9 +437,16 @@ function ScanForm({ station, autoPicked, onAutoPickedConsumed }: { station: Stat
 
       const user = (await supabase.auth.getUser()).data.user;
 
-      // Post-paint color assignment: save color if selected and vehicle has none
+      // Post-paint color assignment: save color if selected and vehicle has none.
+      // Also log a paint station_event so the assignment shows in the activity log
+      // and color dashboard (source: color_update distinguishes from flow events).
       if (color && !picked.actual_color_id && (postPaintStations.includes(station) || station === "shortage")) {
         await supabase.from("vehicles").update({ actual_color_id: color }).eq("id", picked.id);
+        await supabase.from("station_events").insert({
+          vehicle_id: picked.id, station: "paint", kind: "in", color_used_id: color,
+          recorded_by: user?.id ?? null, source: "color_update",
+          meta: { post_paint_assignment: true, at_station: station },
+        });
       }
 
       // Create issue if issueText provided

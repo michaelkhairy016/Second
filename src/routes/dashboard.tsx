@@ -1705,6 +1705,38 @@ function ColorTrackingSection() {
   const [vehicles, setVehicles] = useState<any[]>([]);
   const [jobs, setJobs] = useState<any[]>([]);
   const [paintEvents, setPaintEvents] = useState<any[]>([]);
+  const [lots, setLots] = useState<{ id: string; model: string }[]>([]);
+  const [todayColors, setTodayColors] = useState<any[]>([]);
+  const [reportBusy, setReportBusy] = useState(false);
+
+  const downloadColorReport = async (period: "day" | "month") => {
+    setReportBusy(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || "";
+      const supabaseKey = (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY || "";
+      if (!supabaseUrl) throw new Error("Supabase URL not configured");
+      const today = new Date();
+      const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+      const res = await fetch(`${supabaseUrl}/functions/v1/dashboard-report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${session?.access_token ?? ""}`, "apikey": supabaseKey },
+        body: JSON.stringify({ date, module: "colors", period }),
+      });
+      if (!res.ok) { let m = `Server error ${res.status}`; try { const t = await res.text(); if (t) m = t; } catch {} throw new Error(m); }
+      const blob = await res.blob();
+      if (blob.size < 100) throw new Error("Report too small — generation may have failed");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `colors-${period === "month" ? "monthly" : "daily"}-report-${date}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    } catch (e: any) {
+      // toast may not be imported in this scope; fall back to console + alert-free
+      console.error("color report download failed", e);
+    } finally {
+      setReportBusy(false);
+    }
+  };
 
   useEffect(() => {
     let cancel = false;
@@ -1714,15 +1746,20 @@ function ColorTrackingSection() {
         const now = new Date();
         const from = new Date(now.getFullYear(), now.getMonth() - (monthsBack - 1), 1);
         const fromStr = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, "0")}-01T00:00:00`;
-        const [{ data: vRes }, { data: jRes }, { data: peRes }] = await Promise.all([
-          supabase.from("vehicles").select("id, contract_model, planned_color_id, actual_color_id, current_station, completed_at, job_order_id"),
+        const todayStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}T00:00:00`;
+        const [{ data: vRes }, { data: jRes }, { data: peRes }, { data: lRes }, { data: tcRes }] = await Promise.all([
+          supabase.from("vehicles").select("id, vin, vin_suffix, contract_model, lot_id, planned_color_id, actual_color_id, current_station, completed_at, job_order_id"),
           supabase.from("job_orders").select("id, job_code, color_plan, units, status"),
           supabase.from("station_events").select("vehicle_id, color_used_id, recorded_at").eq("station", "paint").eq("kind", "in").gte("recorded_at", fromStr),
+          supabase.from("lots").select("id, model"),
+          supabase.from("station_events").select("vehicle_id, color_used_id, recorded_at, recorded_by").eq("station", "paint").not("color_used_id", "is", null).gte("recorded_at", todayStart),
         ]);
         if (cancel) return;
         setVehicles(vRes ?? []);
         setJobs(jRes ?? []);
         setPaintEvents(peRes ?? []);
+        setLots(lRes ?? []);
+        setTodayColors(tcRes ?? []);
       } finally {
         if (!cancel) setLoading(false);
       }
@@ -1734,10 +1771,16 @@ function ColorTrackingSection() {
   const colorName = (id: string | null) => id ? (colors.get(id)?.name ?? id.slice(0, 6)) : "Unassigned";
   const colorForIdx = (i: number) => COLOR_PALETTE[i % COLOR_PALETTE.length];
 
+  // Model resolution mirrors the dashboard vModel pattern: contract_model, else lot model.
+  // Falls back to "Unknown" only when neither is set (rare).
+  const lotModel = useMemo(() => Object.fromEntries(lots.map(l => [l.id, l.model])), [lots]);
+  const resolveModel = useCallback((v: { contract_model: string | null; lot_id: string | null }) =>
+    v.contract_model || (v.lot_id && lotModel[v.lot_id]) || "Unknown", [lotModel]);
+
   const scopedVehicles = useMemo(() => {
     if (modelFilter === "all") return vehicles;
-    return vehicles.filter(v => (v.contract_model || "Unknown") === modelFilter);
-  }, [vehicles, modelFilter]);
+    return vehicles.filter(v => resolveModel(v) === modelFilter);
+  }, [vehicles, modelFilter, resolveModel]);
 
   // 1. Planned vs Actual per job order
   const jobRows = useMemo(() => {
@@ -1767,7 +1810,7 @@ function ColorTrackingSection() {
     const byModel: Record<string, Record<string, number>> = {};
     scopedVehicles.forEach(v => {
       if (!v.actual_color_id) return;
-      const model = v.contract_model || "Unknown";
+      const model = resolveModel(v);
       if (!byModel[model]) byModel[model] = {};
       byModel[model][v.actual_color_id] = (byModel[model][v.actual_color_id] ?? 0) + 1;
     });
@@ -1808,16 +1851,37 @@ function ColorTrackingSection() {
   const backlog = useMemo(() => {
     return scopedVehicles
       .filter(v => v.actual_color_id === null && POST_PAINT_STATIONS_CT.includes(v.current_station ?? ""))
-      .map(v => ({ id: v.id, model: v.contract_model || "Unknown", station: v.current_station, planned: v.planned_color_id }))
+      .map(v => ({ id: v.id, model: resolveModel(v), station: v.current_station, planned: v.planned_color_id }))
       .sort((a, b) => a.model.localeCompare(b.model));
-  }, [scopedVehicles]);
+  }, [scopedVehicles, resolveModel]);
 
   const totalPainted = scopedVehicles.filter(v => v.actual_color_id).length;
   const totalPlannedAll = jobRows.reduce((s, r) => s + r.plannedTotal, 0);
   const totalActualAll = jobRows.reduce((s, r) => s + r.actualTotal, 0);
   const overallCompliance = totalPlannedAll > 0 ? Math.round((totalActualAll / totalPlannedAll) * 100) : 0;
   const activeColors = new Set(scopedVehicles.filter(v => v.actual_color_id).map(v => v.actual_color_id)).size;
-  const modelOptions = useMemo(() => Array.from(new Set(vehicles.map(v => v.contract_model || "Unknown"))).sort(), [vehicles]);
+  const modelOptions = useMemo(() => Array.from(new Set(vehicles.map(v => resolveModel(v)))).sort(), [vehicles, resolveModel]);
+
+  // 5. Cars colored today — recent color-assignment events with vehicle + model
+  const coloredToday = useMemo(() => {
+    return todayColors
+      .map(e => {
+        const v = vehicles.find(x => x.id === e.vehicle_id);
+        return {
+          colorId: e.color_used_id,
+          recordedAt: e.recorded_at,
+          vin: v?.vin ?? e.vehicle_id,
+          vinSuffix: v?.vin_suffix ?? "",
+          model: v ? resolveModel(v) : "Unknown",
+        };
+      })
+      .sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
+  }, [todayColors, vehicles, resolveModel]);
+
+  // 6. Per-job planned vs actual — chart-shaped (top jobs by actual)
+  const jobChart = useMemo(() => {
+    return jobRows.slice(0, 10).map(r => ({ job: r.job.job_code, planned: r.plannedTotal, actual: r.actualTotal }));
+  }, [jobRows]);
 
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
 
@@ -1834,6 +1898,14 @@ function ColorTrackingSection() {
         <select value={monthsBack} onChange={e => setMonthsBack(Number(e.target.value))} className="border rounded-md px-2 py-1 text-sm bg-background">
           {[1, 3, 6, 12].map(n => <option key={n} value={n}>Last {n} month{n > 1 ? "s" : ""}</option>)}
         </select>
+        <div className="flex items-center gap-2 ml-auto">
+          <Button size="sm" variant="outline" disabled={reportBusy} onClick={() => downloadColorReport("day")} className="gap-2">
+            {reportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Daily Color Report
+          </Button>
+          <Button size="sm" variant="outline" disabled={reportBusy} onClick={() => downloadColorReport("month")} className="gap-2">
+            {reportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Monthly Color Report
+          </Button>
+        </div>
       </div>
 
       {/* KPI cards */}
@@ -1842,6 +1914,36 @@ function ColorTrackingSection() {
         <div className="bg-card p-4 rounded-lg border"><p className="text-xs text-muted-foreground">Overall Compliance</p><p className="text-2xl font-bold text-green-600">{overallCompliance}%</p></div>
         <div className="bg-card p-4 rounded-lg border"><p className="text-xs text-muted-foreground">Pending Unpainted</p><p className="text-2xl font-bold text-amber-600">{backlog.length}</p></div>
         <div className="bg-card p-4 rounded-lg border"><p className="text-xs text-muted-foreground">Active Colors</p><p className="text-2xl font-bold text-purple-600">{activeColors}</p></div>
+      </div>
+
+      {/* Cars colored today — live */}
+      <div className="bg-card p-6 rounded-lg border shadow-sm">
+        <h2 className="text-xl font-bold mb-1">Cars Colored Today ({coloredToday.length})</h2>
+        <p className="text-xs text-muted-foreground mb-4">Color assignments recorded at paint today.</p>
+        {coloredToday.length === 0 ? <p className="text-sm text-muted-foreground">No colors assigned today.</p> : (
+          <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 bg-card">
+                <tr className="bg-muted">
+                  <th className="p-2 font-semibold">Time</th>
+                  <th className="p-2 font-semibold">VIN</th>
+                  <th className="p-2 font-semibold">Model</th>
+                  <th className="p-2 font-semibold">Color</th>
+                </tr>
+              </thead>
+              <tbody>
+                {coloredToday.map((r, i) => (
+                  <tr key={i} className="border-b">
+                    <td className="p-2 text-xs text-muted-foreground">{new Date(r.recordedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Cairo" })}</td>
+                    <td className="p-2 font-mono text-xs">{r.vinSuffix || r.vin}</td>
+                    <td className="p-2">{r.model}</td>
+                    <td className="p-2"><Badge variant="secondary" className="text-[10px]">{colorName(r.colorId)} ({colorCode(r.colorId)})</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Charts grid */}
@@ -1898,6 +2000,25 @@ function ColorTrackingSection() {
                 <Area key={cid} type="monotone" dataKey={colorCode(cid)} name={colorName(cid)} stackId="1" stroke={colorForIdx(i)} fill={colorForIdx(i)} fillOpacity={0.5} />
               ))}
             </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Planned vs Actual per job order — chart */}
+      <div className="bg-card p-6 rounded-lg border shadow-sm">
+        <h2 className="text-xl font-bold mb-1">Planned vs Actual per Job Order</h2>
+        <p className="text-xs text-muted-foreground mb-4">Top jobs by actual painted count.</p>
+        {jobChart.length === 0 ? <p className="text-sm text-muted-foreground">No job orders with color plans.</p> : (
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={jobChart} margin={{ top: 10, right: 20, bottom: 5, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+              <XAxis dataKey="job" stroke="currentColor" fontSize={10} interval={0} angle={-20} textAnchor="end" height={60} />
+              <YAxis stroke="currentColor" fontSize={12} allowDecimals={false} />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="planned" name="Planned" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="actual" name="Actual" fill="#10b981" radius={[4, 4, 0, 0]} />
+            </BarChart>
           </ResponsiveContainer>
         )}
       </div>

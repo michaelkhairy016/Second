@@ -163,6 +163,7 @@ type ActivityEvent = {
   source: string | null;
   vehicle: { vin: string } | null;
   recorder: { display_name: string } | null;
+  color: { code: string; name: string } | null;
 };
 
 type ActivityShortage = {
@@ -191,7 +192,7 @@ function ActivityLog() {
     setLoading(true);
     const [evRes, shRes] = await Promise.all([
       supabase.from("station_events")
-        .select("id, station, kind, recorded_at, source, vehicle:vehicles(vin), recorder:profiles!station_events_profiles_recorded_by_fkey(display_name)")
+        .select("id, station, kind, recorded_at, source, vehicle:vehicles(vin), recorder:profiles!station_events_profiles_recorded_by_fkey(display_name), color:standard_colors!station_events_color_used_id_fkey(code, name)")
         .gte("recorded_at", threeDaysAgo)
         .order("recorded_at", { ascending: false })
         .limit(150),
@@ -243,6 +244,7 @@ function ActivityLog() {
                     <th className="p-2 text-left font-semibold">VIN</th>
                     <th className="p-2 text-left font-semibold">Station</th>
                     <th className="p-2 text-left font-semibold">Dir</th>
+                    <th className="p-2 text-left font-semibold">Color</th>
                     <th className="p-2 text-left font-semibold">By</th>
                     <th className="p-2 text-left font-semibold">Source</th>
                   </tr>
@@ -254,6 +256,7 @@ function ActivityLog() {
                       <td className="p-2 font-mono">{e.vehicle?.vin ?? "—"}</td>
                       <td className="p-2">{stationByCode(e.station)?.label ?? e.station}</td>
                       <td className="p-2"><Badge variant={e.kind === "in" ? "info" : "success"} className="text-[10px] px-1">{e.kind.toUpperCase()}</Badge></td>
+                      <td className="p-2">{e.color ? <Badge variant="secondary" className="text-[10px] px-1">{e.color.code}</Badge> : <span className="text-muted-foreground">—</span>}</td>
                       <td className="p-2 font-medium">{e.recorder?.display_name ?? "—"}</td>
                       <td className="p-2 text-muted-foreground">{e.source ?? "—"}</td>
                     </tr>
@@ -318,19 +321,94 @@ function formatDuration(seconds: number): string {
   return `${m}m`;
 }
 
+function formatRelative(iso: string | null): string {
+  if (!iso) return "—";
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 0) return "just now";
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+// Online status derived from heartbeat recency (social-media style).
+function presenceStatus(iso: string | null, isOnline: boolean): { label: string; tone: "online" | "idle" | "offline" } {
+  if (!iso) return { label: "Never", tone: "offline" };
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (isOnline && s < 120) return { label: "Active now", tone: "online" };
+  if (s < 300) return { label: `Active ${Math.floor(s / 60)}m ago`, tone: "idle" };
+  return { label: "Offline", tone: "offline" };
+}
+
+type ActivitySummary = {
+  lastAt: string | null;
+  lastLabel: string;
+  eventsToday: number;
+  shortagesToday: number;
+  issuesToday: number;
+};
+
 function PresencePanel() {
   const [rows, setRows] = useState<PresenceRow[]>([]);
+  const [activity, setActivity] = useState<Record<string, ActivitySummary>>({});
+  const [avgDaily, setAvgDaily] = useState<Record<string, { avg: number; days: number }>>({});
   const [loading, setLoading] = useState(true);
 
   const reload = async () => {
     setLoading(true);
-    // Mark stale users offline first
     await supabase.rpc("mark_stale_offline");
-    const { data, error } = await supabase
-      .from("user_presence")
-      .select("user_id, is_online, last_heartbeat, first_seen_today, total_active_seconds, profile:profiles(display_name)")
-      .order("is_online", { ascending: false });
-    if (!error) setRows((data ?? []) as unknown as PresenceRow[]);
+    const since3d = new Date(Date.now() - 3 * 86400000).toISOString();
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const todayISO = todayStart.toISOString();
+
+    const [presRes, evRes, shRes, issRes, avgRes] = await Promise.all([
+      supabase.from("user_presence")
+        .select("user_id, is_online, last_heartbeat, first_seen_today, total_active_seconds, profile:profiles(display_name)")
+        .order("is_online", { ascending: false }),
+      supabase.from("station_events")
+        .select("recorded_by, recorded_at, station, vehicle:vehicles(vin)")
+        .gte("recorded_at", since3d).order("recorded_at", { ascending: false }).limit(500),
+      supabase.from("shortages")
+        .select("created_by, created_at").gte("created_at", since3d).order("created_at", { ascending: false }).limit(300),
+      supabase.from("issues")
+        .select("reported_by, created_at").gte("created_at", since3d).order("created_at", { ascending: false }).limit(300),
+      supabase.rpc("get_presence_daily_avg", { days_back: 30 }),
+    ]);
+
+    if (!presRes.error) setRows((presRes.data ?? []) as unknown as PresenceRow[]);
+
+    // Build per-user activity summary
+    const map: Record<string, ActivitySummary> = {};
+    const ensure = (uid: string | null): ActivitySummary | null => {
+      if (!uid) return null;
+      if (!map[uid]) map[uid] = { lastAt: null, lastLabel: "—", eventsToday: 0, shortagesToday: 0, issuesToday: 0 };
+      return map[uid];
+    };
+    (evRes.data ?? []).forEach((e: any) => {
+      const a = ensure(e.recorded_by); if (!a) return;
+      if (e.recorded_at >= todayISO) a.eventsToday++;
+      if (!a.lastAt || e.recorded_at > a.lastAt) {
+        a.lastAt = e.recorded_at;
+        const st = stationByCode(e.station)?.label ?? e.station;
+        a.lastLabel = e.station === "paint" ? `Painted (${st})` : `Scanned ${st}`;
+      }
+    });
+    (shRes.data ?? []).forEach((s: any) => {
+      const a = ensure(s.created_by); if (!a) return;
+      if (s.created_at >= todayISO) a.shortagesToday++;
+      if (!a.lastAt || s.created_at > a.lastAt) { a.lastAt = s.created_at; a.lastLabel = "Logged shortage"; }
+    });
+    (issRes.data ?? []).forEach((i: any) => {
+      const a = ensure(i.reported_by); if (!a) return;
+      if (i.created_at >= todayISO) a.issuesToday++;
+      if (!a.lastAt || i.created_at > a.lastAt) { a.lastAt = i.created_at; a.lastLabel = "Reported issue"; }
+    });
+    setActivity(map);
+
+    const avgMap: Record<string, { avg: number; days: number }> = {};
+    (avgRes.data ?? []).forEach((r: any) => { avgMap[r.user_id] = { avg: Number(r.avg_seconds) || 0, days: Number(r.days_active) || 0 }; });
+    setAvgDaily(avgMap);
+
     setLoading(false);
   };
 
@@ -339,17 +417,20 @@ function PresencePanel() {
     const ch = supabase.channel("presence-admin")
       .on("postgres_changes", { event: "*", schema: "public", table: "user_presence" }, reload)
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    const tick = setInterval(reload, 30_000); // keep "Active Xm ago" fresh
+    return () => { supabase.removeChannel(ch); clearInterval(tick); };
   }, []);
 
-  const onlineCount = rows.filter(r => r.is_online).length;
+  const onlineCount = rows.filter(r => presenceStatus(r.last_heartbeat, r.is_online).tone === "online").length;
+  const dotClass = (tone: "online" | "idle" | "offline") =>
+    tone === "online" ? "bg-green-500" : tone === "idle" ? "bg-amber-500" : "bg-gray-400";
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <Badge variant="success" className="gap-1">
           <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" /></span>
-          {onlineCount} online
+          {onlineCount} active now
         </Badge>
         <span className="text-sm text-muted-foreground">{rows.length} total users</span>
         <Button variant="outline" size="sm" onClick={reload} disabled={loading}>
@@ -368,38 +449,56 @@ function PresencePanel() {
               <tr className="bg-muted">
                 <th className="p-2 text-left font-semibold">Status</th>
                 <th className="p-2 text-left font-semibold">User</th>
-                <th className="p-2 text-left font-semibold">Last Heartbeat</th>
-                <th className="p-2 text-left font-semibold">First Seen Today</th>
-                <th className="p-2 text-left font-semibold">Active Time Today</th>
+                <th className="p-2 text-left font-semibold">Last Seen</th>
+                <th className="p-2 text-left font-semibold">Last Activity</th>
+                <th className="p-2 text-left font-semibold">Active Today</th>
+                <th className="p-2 text-left font-semibold">Avg Daily (30d)</th>
+                <th className="p-2 text-left font-semibold">Today</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {rows.map(r => (
-                <tr key={r.user_id} className={r.is_online ? "" : "opacity-60"}>
-                  <td className="p-2">
-                    {r.is_online ? (
-                      <span className="relative flex h-3 w-3">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                        <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
+              {rows.map(r => {
+                const st = presenceStatus(r.last_heartbeat, r.is_online);
+                const act = activity[r.user_id];
+                const avg = avgDaily[r.user_id];
+                return (
+                  <tr key={r.user_id} className={st.tone === "offline" ? "opacity-60" : ""}>
+                    <td className="p-2 whitespace-nowrap">
+                      <span className="flex items-center gap-2">
+                        {st.tone === "online" ? (
+                          <span className="relative flex h-2.5 w-2.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" />
+                          </span>
+                        ) : (
+                          <span className={`inline-flex rounded-full h-2.5 w-2.5 ${dotClass(st.tone)}`} />
+                        )}
+                        <span className="text-xs font-medium">{st.label}</span>
                       </span>
-                    ) : (
-                      <span className="inline-flex rounded-full h-3 w-3 bg-gray-400" />
-                    )}
-                  </td>
-                  <td className="p-2 font-medium">{r.profile?.display_name ?? "Unknown"}</td>
-                  <td className="p-2 text-xs text-muted-foreground">
-                    {r.last_heartbeat ? new Date(r.last_heartbeat).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
-                  </td>
-                  <td className="p-2 text-xs text-muted-foreground">
-                    {r.first_seen_today ? new Date(r.first_seen_today).toLocaleString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "—"}
-                  </td>
-                  <td className="p-2">
-                    <Badge variant={r.total_active_seconds > 3600 ? "success" : r.total_active_seconds > 0 ? "info" : "muted"} className="text-[10px]">
-                      {formatDuration(r.total_active_seconds)}
-                    </Badge>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="p-2 font-medium">{r.profile?.display_name ?? "Unknown"}</td>
+                    <td className="p-2 text-xs text-muted-foreground" title={r.last_heartbeat ?? ""}>{formatRelative(r.last_heartbeat)}</td>
+                    <td className="p-2 text-xs">
+                      {act?.lastAt ? (
+                        <span><span className="text-muted-foreground">{act.lastLabel}</span> · {formatRelative(act.lastAt)}</span>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="p-2">
+                      <Badge variant={r.total_active_seconds > 3600 ? "success" : r.total_active_seconds > 0 ? "info" : "muted"} className="text-[10px]">
+                        {formatDuration(r.total_active_seconds)}
+                      </Badge>
+                    </td>
+                    <td className="p-2 text-xs">
+                      {avg ? (
+                        <span>{formatDuration(avg.avg)} <span className="text-muted-foreground">({avg.days}d)</span></span>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="p-2 text-xs text-muted-foreground whitespace-nowrap">
+                      {act ? `${act.eventsToday} ev · ${act.shortagesToday} sh · ${act.issuesToday} iss` : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
