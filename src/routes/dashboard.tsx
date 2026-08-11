@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { RequireAuth } from "@/components/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/lib/auth-context";
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -13,12 +13,13 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { LayoutDashboard, Download, Search, Loader2, CalendarDays, ChevronDown, ChevronRight, FileSpreadsheet } from "lucide-react";
+import { LayoutDashboard, Download, Search, Loader2, CalendarDays, ChevronDown, ChevronRight, FileSpreadsheet, RefreshCw } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell as RechartsCell, CartesianGrid, LineChart, Line, AreaChart, Area } from "recharts";
 import { useColors } from "@/hooks/use-colors";
 import { toast } from "sonner";
-import { STATIONS, stationByCode } from "@/lib/stations";
+import { STATIONS, stationByCode, type StationCode } from "@/lib/stations";
 import { exportToCSV } from "@/lib/export";
+import { StockCountsSection, RequestStockCountButton } from "@/components/StockCountsSection";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — AFA Shopfloor" }] }),
@@ -34,29 +35,47 @@ type VehicleRow = { id: string; current_station: string | null; lot_id: string |
 type LotRow = { id: string; model: string };
 type IssueRow = { id: string; vehicle_id: string | null; status: string; title: string };
 
-const DEPARTMENTS = ["overview", "shortages", "pbs", "wbs", "delayed", "reports", "trends", "colors"] as const;
+const DEPARTMENTS = ["overview", "shortages", "pbs", "wbs", "delayed", "reports", "trends", "colors", "stock_counts"] as const;
 type Dept = typeof DEPARTMENTS[number];
 
-const DEPT_STATION: Record<string, string> = { overview: "", shortages: "shortage", pbs: "pbs", wbs: "wbs", delayed: "", reports: "", trends: "", colors: "" };
-const DEPT_LABEL: Record<string, string> = { overview: "Overview", shortages: "Shortages", pbs: "PBS", wbs: "WBS", delayed: "Delayed", reports: "Reports", trends: "Trends", colors: "Color Tracking" };
+const DEPT_STATION: Record<string, string> = { overview: "", shortages: "shortage", pbs: "pbs", wbs: "wbs", delayed: "", reports: "", trends: "", colors: "", stock_counts: "" };
+const DEPT_LABEL: Record<string, string> = { overview: "Overview", shortages: "Shortages", pbs: "PBS", wbs: "WBS", delayed: "Delayed", reports: "Reports", trends: "Trends", colors: "Color Tracking", stock_counts: "Stock Counts" };
+// Format an ISO timestamp to Cairo local string (shortages table has no *_cairo column,
+// so derive client-side to keep entry-time display consistent with the rest of the dashboard).
+const toCairoStr = (iso?: string | null): string =>
+  iso ? new Date(iso).toLocaleString("en-GB", { timeZone: "Africa/Cairo", hour12: false }) : "";
 
-const SHORTAGE_CATEGORIES = ["PLASTICS PART", "Local", "CKD", "Scratches"] as const;
-const PBS_CATEGORIES = ["No Issue", "CKD", "Local", "Dismantled"] as const;
+// Reverse lookup: WIP station code → dashboard dept (for global-search click-to-jump).
+const STATION_TO_DEPT: Record<string, Dept> = { shortage: "shortages", pbs: "pbs", wbs: "wbs" };
+
+const SHORTAGE_CATEGORIES = ["PLASTICS PART", "Local", "CKD", "Scratches", "Damage"] as const;
+const PBS_CATEGORIES = ["No Issue", "CKD", "Local", "Plastics", "Dismantled"] as const;
 const WBS_CATEGORIES = ["Issue", "OK"] as const;
+
+// Reason → category map. Mirrors the PDF generator's REASON_MAP
+// (supabase/functions/dashboard-report/index.ts) so dashboard counts match the report.
+const SHORTAGE_REASON_MAP: Record<string, string> = {
+  ckd: "CKD",
+  local: "Local",
+  plastics: "PLASTICS PART",
+  missing_plastics: "PLASTICS PART",
+  missing_paint_miscolored: "Scratches",
+  unavailable_factory: "Scratches",
+  general_missing: "Local",
+  damage: "Damage",
+};
 
 function mapShortageCategory(s: { shortage_reason: string | null; part_type?: string | null }): string {
   // part_type is authoritative for CKD cars (e.g. a CKD car with a paint/miscolor issue is still CKD).
   if (s.part_type === "ckd") return "CKD";
   const raw = s.shortage_reason;
-  if (raw === "missing_plastics" || raw === "plastics") return "PLASTICS PART";
-  if (raw === "local") return "Local";
-  if (raw === "ckd") return "CKD";
-  if (raw && (raw.includes("scratch") || raw === "missing_paint_miscolored")) return "Scratches";
-  return "Local";
+  if (raw && SHORTAGE_REASON_MAP[raw]) return SHORTAGE_REASON_MAP[raw];
+  return s.part_type === "ckd" ? "CKD" : "Local";
 }
 
 function Page() {
   const { isSuperuser, isStaff, isStatus, dashboardAllowed } = useAuth();
+  const { getCode: colorCode } = useColors();
   if (!isSuperuser && !isStaff && !isStatus && !dashboardAllowed) return <p className="text-muted-foreground p-8">Access restricted.</p>;
   if (!dashboardAllowed) return <p className="text-muted-foreground p-8">Dashboard access disabled for your account.</p>;
 
@@ -65,6 +84,8 @@ function Page() {
   const [delayThreshold, setDelayThreshold] = useState(24);
   const [activeDept, setActiveDept] = useState<Dept>("shortages");
   const [vinSearch, setVinSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(true);
   const [calOpen, setCalOpen] = useState(false);
   const [live, setLive] = useState(true);
@@ -73,6 +94,10 @@ function Page() {
   const [monthCalOpen, setMonthCalOpen] = useState(false);
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
   const [cellDialog, setCellDialog] = useState<{ title: string; rows: { vin: string; model: string; station: string | null; issue: string; category?: string; enteredAt?: string | null; enteredAtCairo?: string | null }[] } | null>(null);
+  const [searchDetail, setSearchDetail] = useState<null | {
+    vin: string; model: string; station: string | null; completed: boolean; archived?: boolean;
+    loading: boolean; archive?: any; live?: { vehicle: any; issues: any[]; shortages: any[] };
+  }>(null);
 
   const [events, setEvents] = useState<EventRow[]>([]);
   const [shortages, setShortages] = useState<ShortageRow[]>([]);
@@ -113,31 +138,120 @@ function Page() {
     return ids;
   }, [vinSearch, vehicles, vModel]);
 
+  // Archived-vehicle matches — on-demand ilike query against vehicle_archive.
+  // Matches lookup.tsx's pattern (direct select; superuser-gated by RLS). Debounced so we
+  // only hit the DB when the user pauses typing. Catches event-less archived rows (e.g.
+  // contract cars) that the events-derived index misses.
+  const [archivedMatches, setArchivedMatches] = useState<{ vin: string; model: string }[]>([]);
+  useEffect(() => {
+    const q = vinSearch.trim();
+    if (!q) { setArchivedMatches([]); return; }
+    const t = setTimeout(async () => {
+      const { data } = await supabase.from("vehicle_archive")
+        .select("vin, lot_model")
+        .or(`vin.ilike.%${q}%,vin_suffix.ilike.%${q}%,lot_model.ilike.%${q}%`)
+        .limit(50);
+      setArchivedMatches((data ?? []).map((a: any) => ({ vin: a.vin as string, model: (a.lot_model as string) || "—" })));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [vinSearch]);
+
+  // Global search across ALL vehicles (live incl. completed + archived) — drives the dropdown.
+  const globalSearchResults = useMemo(() => {
+    const q = vinSearch.trim().toLowerCase();
+    if (!q) return [] as { id: string; vin: string; model: string; station: string | null; completed: boolean; archived?: boolean }[];
+    const out: { id: string; vin: string; model: string; station: string | null; completed: boolean; archived?: boolean }[] = [];
+    const seenVins = new Set<string>();
+    for (const v of allVehicles) {
+      const vin = v.vin.toLowerCase();
+      const model = (vModel.get(v.id) ?? "").toLowerCase();
+      if (vin.includes(q) || model.includes(q)) {
+        out.push({ id: v.id, vin: v.vin, model: vModel.get(v.id) ?? "—", station: v.current_station, completed: !!v.completed_at });
+        seenVins.add(vin);
+        if (out.length >= 50) return out;
+      }
+    }
+    for (const a of archivedMatches) {
+      if (out.length >= 50) break;
+      const vin = a.vin.toLowerCase();
+      if (seenVins.has(vin)) continue;
+      out.push({ id: a.vin, vin: a.vin, model: a.model, station: null, completed: true, archived: true });
+      seenVins.add(vin);
+    }
+    return out;
+  }, [vinSearch, allVehicles, vModel, archivedMatches]);
+
+  // Click a search result → open a details popup (full live or archived data).
+  const openSearchDetail = async (r: { id: string; vin: string; model: string; station: string | null; completed: boolean; archived?: boolean }) => {
+    setSearchOpen(false);
+    searchInputRef.current?.blur();
+    const base = { vin: r.vin, model: r.model, station: r.station, completed: r.completed, archived: r.archived, loading: true } as const;
+    setSearchDetail({ ...base });
+    try {
+      if (r.archived) {
+        const { data } = await supabase.from("vehicle_archive")
+          .select("vin, vin_suffix, lot_model, lot_code, archived_at, vehicle_data, events_data, issues_data, shortages_data")
+          .eq("vin", r.vin).maybeSingle();
+        setSearchDetail({ ...base, loading: false, archive: data });
+      } else {
+        const [vRes, issRes, shRes] = await Promise.all([
+          supabase.from("vehicles").select("id, vin, vin_suffix, current_station, contract_model, lot_id, completed_at, updated_at, planned_color_id, actual_color_id").eq("id", r.id).maybeSingle(),
+          supabase.from("issues").select("title, status, severity, station, description, created_at").eq("vehicle_id", r.id).order("created_at", { ascending: false }),
+          supabase.from("shortages").select("parts, shortage_reason, part_type, status, created_at, cleared_at").eq("vehicle_id", r.id).order("created_at", { ascending: false }),
+        ]);
+        setSearchDetail({ ...base, loading: false, live: { vehicle: vRes.data, issues: (issRes.data ?? []) as any[], shortages: (shRes.data ?? []) as any[] } });
+      }
+    } catch {
+      setSearchDetail(d => (d ? { ...d, loading: false } : d));
+    }
+  };
+
+  // From the detail popup, jump to the vehicle's WIP station tab (live shortage/pbs/wbs only).
+  const jumpToStationTab = (station: string | null) => {
+    const dept = station ? STATION_TO_DEPT[station] : undefined;
+    if (dept) { setActiveDept(dept); setExpandedModel(null); }
+    setSearchDetail(null);
+  };
+
   const load = async () => {
     setLoading(true);
     const dayStart = `${selectedDate}T00:00:00`;
     const dayEnd = `${selectedDate}T23:59:59`;
 
-    const [evRes, shRes, lRes, iRes, mEvRes, mShRes, osRes, clRes, avRes] = await Promise.all([
+    // Vehicles table exceeds the PostgREST 1000-row default cap — paginate so WIP
+    // counts (shortage/pbs/wbs) include every vehicle, matching the PDF/service-role view.
+    const vehiclesP = (async () => {
+      const pageSize = 1000;
+      let out: any[] = [];
+      let from = 0;
+      while (from <= 100000) {
+        const res = await supabase.from("vehicles").select("id, current_station, lot_id, vin, vin_suffix, updated_at, contract_model, completed_at").range(from, from + pageSize - 1);
+        if (res.error) { console.error("[dashboard] vehicles query error:", res.error); break; }
+        const rows = (res.data ?? []) as any[];
+        out = out.concat(rows);
+        if (rows.length < pageSize) break;
+        from += pageSize;
+      }
+      return out;
+    })();
+
+    const [evRes, shRes, lRes, iRes, mEvRes, mShRes, osRes, clRes] = await Promise.all([
       // Today's events via unified RPC (carries vin/model/archived — no map dependency, no dashes)
       supabase.rpc("get_production_events", { p_from: dayStart, p_to: dayEnd }),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, created_at_cairo, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").gte("created_at", dayStart).lte("created_at", dayEnd),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").gte("created_at", dayStart).lte("created_at", dayEnd),
       supabase.from("lots").select("id, model"),
       supabase.from("issues").select("id, vehicle_id, status, title").in("status", ["open", "in_progress"]),
       // Monthly events: full month range via unified RPC (includes archived vehicles)
       supabase.rpc("get_production_events", { p_from: `${monthStart}T00:00:00`, p_to: monthEndDate }),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, created_at_cairo, cleared_at, cleared_at_cairo, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").gte("created_at", `${monthStart}T00:00:00`).lte("created_at", monthEndDate),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, created_at_cairo").eq("status", "open"),
-      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, created_at_cairo, cleared_at, cleared_at_cairo, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").eq("status", "cleared").gte("cleared_at", dayStart).lte("cleared_at", dayEnd),
-      // ALL vehicles (incl. completed) — single source for WIP + model resolution
-      supabase.from("vehicles").select("id, current_station, lot_id, vin, vin_suffix, updated_at, contract_model, completed_at"),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").gte("created_at", `${monthStart}T00:00:00`).lte("created_at", monthEndDate),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at").eq("status", "open"),
+      supabase.from("shortages").select("id, vehicle_id, parts, shortage_reason, part_type, status, created_at, cleared_at, vehicle:vehicles(vin, vin_suffix, contract_model, lot_id)").eq("status", "cleared").gte("cleared_at", dayStart).lte("cleared_at", dayEnd),
     ]);
-
-    if (avRes.error) console.error("[dashboard] vehicles query error:", avRes.error);
+    const avData = await vehiclesP;
 
     setEvents(((evRes.data ?? []) as unknown) as EventRow[]);
     setShortages((shRes.data ?? []) as unknown as ShortageRow[]);
-    setAllVehicles((avRes.data ?? []) as VehicleRow[]);
+    setAllVehicles((avData ?? []) as VehicleRow[]);
     setLots((lRes.data ?? []) as LotRow[]);
     setIssues((iRes.data ?? []) as IssueRow[]);
     setAllOpenShortages((osRes.data ?? []) as unknown as ShortageRow[]);
@@ -161,12 +275,22 @@ function Page() {
 
   useEffect(() => { load(); }, [selectedDate]);
   // All-history events for Vehicle Tracing (every movement, every date — not just today).
+  // The wide range returns ~15k rows, well past the PostgREST 1000-row cap — paginate.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase.rpc("get_production_events", { p_from: "2024-01-01T00:00:00", p_to: "2030-12-31T23:59:59" });
-      if (error) { console.error("[dashboard] history events error:", error); return; }
-      if (!cancelled) setAllHistoryEvents(((data ?? []) as unknown) as EventRow[]);
+      const pageSize = 1000;
+      let out: any[] = [];
+      let from = 0;
+      while (from <= 50000) {
+        const { data, error } = await supabase.rpc("get_production_events", { p_from: "2024-01-01T00:00:00", p_to: "2030-12-31T23:59:59" }).range(from, from + pageSize - 1);
+        if (error) { console.error("[dashboard] history events error:", error); break; }
+        const rows = (data ?? []) as any[];
+        out = out.concat(rows);
+        if (rows.length < pageSize) break;
+        from += pageSize;
+      }
+      if (!cancelled) setAllHistoryEvents(((out) as unknown) as EventRow[]);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -211,8 +335,10 @@ function Page() {
   }, [issues]);
 
   const vehicleShortageCategory = useMemo(() => {
+    // First-wins (matches PDF vShortageMap): a vehicle with multiple open shortages
+    // keeps the category of the first shortage seen, instead of nondeterministic overwrite.
     const m = new Map<string, string>();
-    allOpenShortages.forEach(s => { if (s.vehicle_id) m.set(s.vehicle_id, mapShortageCategory(s)); });
+    allOpenShortages.forEach(s => { if (s.vehicle_id && !m.has(s.vehicle_id)) m.set(s.vehicle_id, mapShortageCategory(s)); });
     return m;
   }, [allOpenShortages]);
 
@@ -235,7 +361,7 @@ function Page() {
     allOpenShortages.forEach(s => {
       if (!s.vehicle_id) return;
       const prev = best[s.vehicle_id];
-      if (!prev || s.created_at < prev) { best[s.vehicle_id] = s.created_at; m.set(s.vehicle_id, s.created_at_cairo ?? ""); }
+      if (!prev || s.created_at < prev) { best[s.vehicle_id] = s.created_at; m.set(s.vehicle_id, toCairoStr(s.created_at)); }
     });
     return m;
   }, [allOpenShortages]);
@@ -245,6 +371,9 @@ function Page() {
     if (!issueList || issueList.length === 0) return "No Issue";
     const text = issueList.join(" ").toLowerCase();
     if (text.includes("ckd")) return "CKD";
+    // Plastics branch mirrors the PDF (plastic / سبيلر) — before dismant so plastic-issue
+    // cars are no longer mis-bucketed into Local.
+    if (text.includes("plastic") || text.includes("سبيلر")) return "Plastics";
     if (text.includes("dismant") || text.includes("فك") || text.includes("تجميع")) return "Dismantled";
     return "Local";
   }, [vehicleIssues]);
@@ -295,7 +424,13 @@ function Page() {
 
   const buildReportTable = useMemo(() => {
     if (activeDept === "shortages") {
-      const cats = SHORTAGE_CATEGORIES;
+      // Dynamic category set (matches PDF: only categories actually present render as columns).
+      const present = new Set<string>();
+      shortages.forEach(s => present.add(mapShortageCategory(s)));
+      shortagesClearedToday.forEach(s => present.add(mapShortageCategory(s)));
+      monthlyShortages.forEach(s => present.add(mapShortageCategory(s)));
+      wipVehicles.forEach(v => present.add(vehicleShortageCategory.get(v.id) ?? "CKD"));
+      const cats = SHORTAGE_CATEGORIES.filter(c => present.has(c));
       const dayMap: Record<string, Record<string, number>> = { In: {}, Out: {} };
       cats.forEach(c => { dayMap.In[c] = 0; dayMap.Out[c] = 0; });
       // In: all shortages created today (regardless of current status)
@@ -525,7 +660,7 @@ function Page() {
           issue: (s.parts || []).join(", ") || (s as any).notes || "",
           // In = when shortage was logged (created_at); Out = when cleared (cleared_at)
           enteredAt: direction === "out" ? (s.cleared_at ?? s.created_at) : s.created_at,
-          enteredAtCairo: direction === "out" ? (s.cleared_at_cairo ?? s.created_at_cairo ?? null) : (s.created_at_cairo ?? null),
+          enteredAtCairo: direction === "out" ? toCairoStr(s.cleared_at ?? s.created_at) : toCairoStr(s.created_at),
         }));
     }
 
@@ -690,14 +825,51 @@ function Page() {
             {live ? "Go Live" : "Live Off"}
           </Button>
           {!isToday && <Badge variant="outline" className="text-amber-600 border-amber-500/50 text-xs">Historical view — In/Out for {selectedDate} + live WIP</Badge>}
-          <div className="flex-1 min-w-[180px] max-w-md">
+          <div className="flex-1 min-w-[180px] max-w-md relative">
             <div className="relative">
-              <Input placeholder="Global VIN / Model Search..." value={vinSearch} onChange={e => setVinSearch(e.target.value)} className="pl-9" />
+              <Input
+                ref={searchInputRef}
+                placeholder="Global VIN / Model Search..."
+                value={vinSearch}
+                onChange={e => { setVinSearch(e.target.value); setSearchOpen(true); }}
+                onFocus={() => setSearchOpen(true)}
+                onKeyDown={e => { if (e.key === "Escape") setSearchOpen(false); }}
+                className="pl-9"
+              />
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             </div>
+            {searchOpen && vinSearch.trim() && globalSearchResults.length > 0 && (
+              <div className="absolute z-50 mt-1 w-full bg-card border rounded-lg shadow-lg max-h-80 overflow-y-auto">
+                {globalSearchResults.map(r => {
+                  const st = r.station ? stationByCode(r.station) : undefined;
+                  const stLabel = st?.label ?? r.station ?? "—";
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => openSearchDetail(r)}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex items-center justify-between gap-2 border-b last:border-b-0 cursor-pointer"
+                    >
+                      <span className="font-mono text-xs truncate">{r.vin}</span>
+                      <span className="text-xs text-muted-foreground truncate flex-1">{r.model}</span>
+                      <span className="flex items-center gap-1 shrink-0">
+                        <Badge variant="outline" className="text-[10px]">{stLabel}</Badge>
+                        <Badge variant={r.archived ? "secondary" : r.completed ? "secondary" : "default"} className="text-[10px]">{r.archived ? "Archived" : r.completed ? "Done" : "WIP"}</Badge>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {searchOpen && vinSearch.trim() && globalSearchResults.length === 0 && (
+              <div className="absolute z-50 mt-1 w-full bg-card border rounded-lg shadow-lg px-3 py-2 text-sm text-muted-foreground">No matches.</div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
+          <Button size="sm" variant="outline" onClick={() => load()} disabled={loading} className="gap-2">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh
+          </Button>
           <Button size="sm" onClick={() => downloadReport("day")} disabled={reportBusy} className="gap-2 bg-teal-600 hover:bg-teal-700">
             {reportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Daily Report
           </Button>
@@ -708,6 +880,9 @@ function Page() {
             <Button size="sm" onClick={downloadShortagesCSV} disabled={csvBusy} variant="outline" className="gap-2">
               {csvBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} Export Shortages CSV
             </Button>
+          )}
+          {(isSuperuser || isStaff) && ["shortages", "pbs", "wbs"].includes(activeDept) && (
+            <RequestStockCountButton station={DEPT_STATION[activeDept] as StationCode} />
           )}
         </div>
       </div>
@@ -740,15 +915,17 @@ function Page() {
               <TrendsSection />
             ) : d === "colors" ? (
               <ColorTrackingSection />
+            ) : d === "stock_counts" ? (
+              <StockCountsSection />
             ) : (
               <>
                 {/* Stat Boxes */}
                 <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
                   <StatBox label="Cars In (Today)" value={d === activeDept ? carsInToday : 0} color="blue" />
                   <StatBox label="Cars Out (Today)" value={d === activeDept ? carsOutToday : 0} color="green" />
-                  <StatBox label="Current WIP" value={d === activeDept ? wipVehicles.length : 0} color="amber" />
+                  <StatBox label="Current WIP" value={d === activeDept ? (d === "shortages" ? wipVehicles.filter(v => vehicleShortageCategory.has(v.id)).length : wipVehicles.length) : 0} color="amber" />
                   <StatBox label="Avg. Time (Hours)" value={d === activeDept ? avgTimeHours.toFixed(1) : "0"} color="purple" />
-                  <StatBox label={d === "shortages" ? "Total Shortage Cars" : "OK"} value={d === activeDept ? (d === "shortages" ? wipVehicles.length : wipVehicles.filter(v => !vehicleIssues.has(v.id)).length) : 0} color={d === "shortages" ? "amber" : "green"} />
+                  <StatBox label={d === "shortages" ? "Total Shortage Cars" : "OK"} value={d === activeDept ? (d === "shortages" ? wipVehicles.filter(v => vehicleShortageCategory.has(v.id)).length : wipVehicles.filter(v => !vehicleIssues.has(v.id)).length) : 0} color={d === "shortages" ? "amber" : "green"} />
                   <StatBox label={d === "shortages" ? "Open Shortages" : "Not OK (Issues)"} value={d === activeDept ? (d === "shortages" ? allOpenShortages.length : wipVehicles.filter(v => vehicleIssues.has(v.id)).length) : 0} color="red" />
                 </div>
 
@@ -1044,11 +1221,116 @@ function Page() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Global-search vehicle detail popup */}
+      <Dialog open={!!searchDetail} onOpenChange={() => setSearchDetail(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 pr-8">
+              <span className="font-mono text-base">{searchDetail?.vin}</span>
+              {searchDetail && (
+                <Badge variant={searchDetail.archived || searchDetail.completed ? "secondary" : "default"} className="text-[10px]">
+                  {searchDetail.archived ? "Archived" : searchDetail.completed ? "Completed" : "WIP"}
+                </Badge>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="overflow-y-auto max-h-[65vh] space-y-4 text-sm">
+            {searchDetail?.loading ? (
+              <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : searchDetail?.archived ? (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <Info label="Model" value={searchDetail.archive?.lot_model || searchDetail.model} />
+                  <Info label="VIN Suffix" value={searchDetail.archive?.vin_suffix || "—"} />
+                  <Info label="Lot Code" value={searchDetail.archive?.lot_code || "—"} />
+                  <Info label="Color (Planned/Actual)" value={`${colorCode(searchDetail.archive?.vehicle_data?.planned_color_id ?? null)} / ${colorCode(searchDetail.archive?.vehicle_data?.actual_color_id ?? null)}`} />
+                  <Info label="Archived At" value={fmt(searchDetail.archive?.archived_at)} />
+                </div>
+                <DetailList title="Issues (any station)" items={((searchDetail.archive?.issues_data as any[]) ?? []).map((i: any) => [i?.station ? (stationByCode(i.station)?.label ?? i.station) : null, i?.severity, i?.title ?? String(i ?? "—"), i?.status].filter(Boolean).join(" — "))} />
+                <DetailList title="Shortages" items={((searchDetail.archive?.shortages_data as any[]) ?? []).map((s: any) => [(Array.isArray(s?.parts) ? s.parts.join(", ") : ""), s?.shortage_reason, s?.status].filter(Boolean).join(" — "))} />
+                <MovementTimeline events={(searchDetail.archive?.events_data as any[]) ?? []} />
+              </>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <Info label="Model" value={searchDetail?.live?.vehicle?.contract_model || searchDetail?.model || "—"} />
+                  <Info label="VIN Suffix" value={searchDetail?.live?.vehicle?.vin_suffix || "—"} />
+                  <Info label="Station" value={searchDetail?.live?.vehicle?.current_station ? (stationByCode(searchDetail.live.vehicle.current_station)?.label ?? searchDetail.live.vehicle.current_station) : "—"} />
+                  <Info label="Color (Planned/Actual)" value={`${colorCode(searchDetail?.live?.vehicle?.planned_color_id ?? null)} / ${colorCode(searchDetail?.live?.vehicle?.actual_color_id ?? null)}`} />
+                  <Info label="Completed At" value={fmt(searchDetail?.live?.vehicle?.completed_at)} />
+                  <Info label="Updated At" value={fmt(searchDetail?.live?.vehicle?.updated_at)} />
+                </div>
+                <DetailList title="Issues (any station)" items={(searchDetail?.live?.issues ?? []).map((i: any) => [i?.station ? (stationByCode(i.station)?.label ?? i.station) : null, i?.severity, i?.title, i?.status].filter(Boolean).join(" — "))} />
+                <DetailList title="Shortages" items={(searchDetail?.live?.shortages ?? []).map((s: any) => [(Array.isArray(s?.parts) ? s.parts.join(", ") : ""), s?.shortage_reason, s?.part_type, s?.status].filter(Boolean).join(" — "))} />
+                {searchDetail && !searchDetail.completed && searchDetail.station && STATION_TO_DEPT[searchDetail.station] && (
+                  <Button size="sm" onClick={() => jumpToStationTab(searchDetail.station)} className="gap-2">
+                    Open in {DEPT_LABEL[STATION_TO_DEPT[searchDetail.station]]} tab
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 const CHART_COLORS = ["#d35400", "#27ae60", "#2980b9", "#f39c12", "#8e44ad", "#e74c3c", "#16a085", "#f97316"];
+
+// --- search-detail popup helpers ---
+const fmt = (iso?: string | null): string =>
+  iso ? new Date(iso).toLocaleString("en-GB", { timeZone: "Africa/Cairo", hour12: false, day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="font-medium break-all">{value}</div>
+    </div>
+  );
+}
+
+function DetailList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div>
+      <div className="text-xs font-semibold mb-1">{title} <span className="text-muted-foreground">({items.length})</span></div>
+      {items.length > 0 ? (
+        <ul className="space-y-1">
+          {items.map((it, i) => <li key={i} className="text-xs bg-muted/50 rounded px-2 py-1">{it}</li>)}
+        </ul>
+      ) : (
+        <p className="text-xs text-muted-foreground">None</p>
+      )}
+    </div>
+  );
+}
+
+function MovementTimeline({ events }: { events: any[] }) {
+  const sorted = [...events].sort((a, b) => new Date(b?.recorded_at ?? 0).getTime() - new Date(a?.recorded_at ?? 0).getTime());
+  return (
+    <div>
+      <div className="text-xs font-semibold mb-1">Movements <span className="text-muted-foreground">({events.length})</span></div>
+      {sorted.length > 0 ? (
+        <ul className="space-y-1 max-h-48 overflow-y-auto">
+          {sorted.map((e, i) => {
+            const st = e?.station ? stationByCode(e.station)?.label ?? e.station : "—";
+            return (
+              <li key={i} className="text-xs flex items-center gap-2 bg-muted/50 rounded px-2 py-1">
+                <Badge variant={e?.kind === "in" ? "default" : "secondary"} className="text-[10px]">{e?.kind ?? "—"}</Badge>
+                <span className="font-medium">{st}</span>
+                <span className="text-muted-foreground ml-auto">{fmt(e?.recorded_at)}</span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="text-xs text-muted-foreground">No movements</p>
+      )}
+    </div>
+  );
+}
 
 type OverviewProps = {
   events: EventRow[]; vehicles: VehicleRow[]; allVehicles: VehicleRow[]; issues: IssueRow[]; shortages: ShortageRow[];
@@ -1785,9 +2067,9 @@ function ColorTrackingSection() {
         const [{ data: vRes }, { data: jRes }, { data: peRes }, { data: lRes }, { data: tcRes }] = await Promise.all([
           supabase.from("vehicles").select("id, vin, vin_suffix, contract_model, lot_id, planned_color_id, actual_color_id, current_station, completed_at, job_order_id"),
           supabase.from("job_orders").select("id, job_code, color_plan, units, status"),
-          supabase.from("station_events").select("vehicle_id, color_used_id, recorded_at, recorded_at_cairo").eq("station", "paint").eq("kind", "in").gte("recorded_at", fromStr),
+          supabase.from("station_events").select("vehicle_id, color_used_id, recorded_at").eq("station", "paint").eq("kind", "in").gte("recorded_at", fromStr),
           supabase.from("lots").select("id, model"),
-          supabase.from("station_events").select("vehicle_id, color_used_id, recorded_at, recorded_at_cairo, recorded_by").eq("station", "paint").not("color_used_id", "is", null).gte("recorded_at", todayStart),
+          supabase.from("station_events").select("vehicle_id, color_used_id, recorded_at, recorded_by").eq("station", "paint").not("color_used_id", "is", null).gte("recorded_at", todayStart),
         ]);
         if (cancel) return;
         setVehicles(vRes ?? []);
@@ -1905,7 +2187,7 @@ function ColorTrackingSection() {
         return {
           colorId: e.color_used_id,
           recordedAt: e.recorded_at,
-          recordedAtCairo: e.recorded_at_cairo ?? null,
+          recordedAtCairo: toCairoStr(e.recorded_at),
           vin: v?.vin ?? e.vehicle_id,
           vinSuffix: v?.vin_suffix ?? "",
           model: v ? resolveModel(v) : "Unknown",

@@ -123,6 +123,18 @@ export type Database = {
         Update: { color_used_id?: string | null; id?: string; kind?: Database["public"]["Enums"]["event_kind"]; meta?: Json | null; recorded_at?: string; recorded_by?: string | null; source?: string; station?: Database["public"]["Enums"]["station_code"]; vehicle_id?: string }
         Relationships: [{ foreignKeyName: "station_events_color_used_id_fkey"; columns: ["color_used_id"]; isOneToOne: false; referencedRelation: "standard_colors"; referencedColumns: ["id"] }, { foreignKeyName: "station_events_vehicle_id_fkey"; columns: ["vehicle_id"]; isOneToOne: false; referencedRelation: "vehicles"; referencedColumns: ["id"] }]
       }
+      stock_count_items: {
+        Row: { advanced_to: Database["public"]["Enums"]["station_code"] | null; created_at: string; id: string; outcome: Database["public"]["Enums"]["stock_count_outcome"]; scanned_at: string | null; scanned_by: string | null; station_snapshot: Database["public"]["Enums"]["station_code"] | null; stock_count_id: string; updated_at: string; vehicle_id: string | null; vin_snapshot: string; vin_suffix_snapshot: string | null }
+        Insert: { advanced_to?: Database["public"]["Enums"]["station_code"] | null; created_at?: string; id?: string; outcome?: Database["public"]["Enums"]["stock_count_outcome"]; scanned_at?: string | null; scanned_by?: string | null; station_snapshot?: Database["public"]["Enums"]["station_code"] | null; stock_count_id: string; updated_at?: string; vehicle_id?: string | null; vin_snapshot: string; vin_suffix_snapshot?: string | null }
+        Update: { advanced_to?: Database["public"]["Enums"]["station_code"] | null; created_at?: string; id?: string; outcome?: Database["public"]["Enums"]["stock_count_outcome"]; scanned_at?: string | null; scanned_by?: string | null; station_snapshot?: Database["public"]["Enums"]["station_code"] | null; stock_count_id?: string; updated_at?: string; vehicle_id?: string | null; vin_snapshot?: string; vin_suffix_snapshot?: string | null }
+        Relationships: [{ foreignKeyName: "stock_count_items_stock_count_id_fkey"; columns: ["stock_count_id"]; isOneToOne: false; referencedRelation: "stock_counts"; referencedColumns: ["id"] }, { foreignKeyName: "stock_count_items_vehicle_id_fkey"; columns: ["vehicle_id"]; isOneToOne: false; referencedRelation: "vehicles"; referencedColumns: ["id"] }]
+      }
+      stock_counts: {
+        Row: { cancelled_at: string | null; cancelled_by: string | null; checked_out_count: number; completed_at: string | null; completed_by: string | null; created_at: string; expected_count: number; id: string; matched_count: number; new_count: number; notes: string | null; requested_by: string | null; station: Database["public"]["Enums"]["station_code"]; started_at: string | null; started_by: string | null; status: Database["public"]["Enums"]["stock_count_status"]; updated_at: string }
+        Insert: { cancelled_at?: string | null; cancelled_by?: string | null; checked_out_count?: number; completed_at?: string | null; completed_by?: string | null; created_at?: string; expected_count?: number; id?: string; matched_count?: number; new_count?: number; notes?: string | null; requested_by?: string | null; station: Database["public"]["Enums"]["station_code"]; started_at?: string | null; started_by?: string | null; status?: Database["public"]["Enums"]["stock_count_status"]; updated_at?: string }
+        Update: { cancelled_at?: string | null; cancelled_by?: string | null; checked_out_count?: number; completed_at?: string | null; completed_by?: string | null; created_at?: string; expected_count?: number; id?: string; matched_count?: number; new_count?: number; notes?: string | null; requested_by?: string | null; station?: Database["public"]["Enums"]["station_code"]; started_at?: string | null; started_by?: string | null; status?: Database["public"]["Enums"]["stock_count_status"]; updated_at?: string }
+        Relationships: []
+      }
       user_roles: {
         Row: { created_at: string; id: string; role: Database["public"]["Enums"]["app_role"]; user_id: string }
         Insert: { created_at?: string; id?: string; role: Database["public"]["Enums"]["app_role"]; user_id: string }
@@ -157,6 +169,7 @@ export type Database = {
     Views: { [_ in never]: never }
     Functions: {
       archive_completed_vehicles: { Args: never; Returns: undefined }
+      complete_stock_count: { Args: { p_count_id: string }; Returns: undefined }
       decrease_producible: { Args: { count_input: number; lot_id_input: string }; Returns: undefined }
       get_daily_status_data: { Args: never; Returns: Json }
       get_production_events: { Args: { p_from: string; p_to: string }; Returns: { recorded_at: string; recorded_at_cairo: string; station: Database["public"]["Enums"]["station_code"]; kind: Database["public"]["Enums"]["event_kind"]; vehicle_id: string | null; vin: string | null; vin_suffix: string | null; model: string | null; archived: boolean }[] }
@@ -167,6 +180,7 @@ export type Database = {
       has_role: { Args: { _role: Database["public"]["Enums"]["app_role"]; _user_id: string }; Returns: boolean }
       has_station_access: { Args: { _station: Database["public"]["Enums"]["station_code"]; _user_id: string }; Returns: boolean }
       mark_stale_offline: { Args: never; Returns: undefined }
+      request_stock_count: { Args: { p_station: Database["public"]["Enums"]["station_code"] }; Returns: string }
       server_now_ms: { Args: never; Returns: number }
       set_user_offline: { Args: { p_user_id: string }; Returns: undefined }
       touch_presence_heartbeat: { Args: { p_user_id: string }; Returns: undefined }
@@ -181,7 +195,14 @@ export type Database = {
       lot_status: "pending" | "active" | "completed"
       shortage_status: "open" | "cleared"
       station_code: "warehouse" | "line_feeding" | "body_shop" | "wbs" | "paint" | "pbs" | "shortage" | "repair" | "cs" | "pdi" | "tcf" | "waiting_repair" | "tcf_offline" | "completed"
+      stock_count_outcome: "expected" | "matched" | "new" | "checked_out" | "skipped"
+      stock_count_status: "requested" | "in_progress" | "completed" | "cancelled"
     }
     CompositeTypes: { [_ in never]: never }
   }
 }
+
+export type Tables<T extends keyof Database["public"]["Tables"]> = Database["public"]["Tables"][T]["Row"];
+export type TablesInsert<T extends keyof Database["public"]["Tables"]> = Database["public"]["Tables"][T]["Insert"];
+export type TablesUpdate<T extends keyof Database["public"]["Tables"]> = Database["public"]["Tables"][T]["Update"];
+export type Enums<T extends keyof Database["public"]["Enums"]> = Database["public"]["Enums"][T];

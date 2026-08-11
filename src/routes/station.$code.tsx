@@ -24,6 +24,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { StationEventWithVehicle, StationCode, VehicleSearchResult } from "@/lib/db-types";
 import { archiveContractVehicle } from "@/lib/contract-archive";
 import { useColors } from "@/hooks/use-colors";
+import { StockCountAlert } from "@/components/StockCountAlert";
 
 export const Route = createFileRoute("/station/$code")({
   head: ({ params }) => ({ meta: [{ title: `${stationByCode(params.code)?.label ?? "Station"} — AFA Shopfloor` }] }),
@@ -53,6 +54,9 @@ function StationPage() {
 
   return (
     <div className="space-y-4 max-w-xl mx-auto">
+      {(station.code === "shortage" || station.code === "pbs" || station.code === "wbs") && (
+        <StockCountAlert station={station.code} />
+      )}
       <button onClick={() => nav({ to: "/" })} className="text-sm text-muted-foreground inline-flex items-center gap-1 hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Stations</button>
       <div className="flex items-center gap-3">
         <div className="h-11 w-11 rounded-lg bg-primary/10 text-primary grid place-items-center"><station.icon className="h-6 w-6" /></div>

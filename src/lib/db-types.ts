@@ -18,6 +18,8 @@ export type UserRole = Tables<"user_roles">;
 export type StationAssignment = Tables<"station_assignments">;
 export type StationAccessRequest = Tables<"station_access_requests">;
 export type Issue = Tables<"issues">;
+export type StockCount = Tables<"stock_counts">;
+export type StockCountItem = Tables<"stock_count_items">;
 export type StandardColor = Tables<"standard_colors">;
 export type Model = Tables<"models">;
 export type ModelTrim = Tables<"model_trims">;
@@ -46,6 +48,8 @@ export type AccessRequestStatus = Enums<"access_request_status">;
 export type LotStatus = Enums<"lot_status">;
 export type IssueSeverity = Enums<"issue_severity">;
 export type IssueStatus = Enums<"issue_status">;
+export type StockCountStatus = Enums<"stock_count_status">;
+export type StockCountOutcome = Enums<"stock_count_outcome">;
 
 // Joined types used across routes
 export type ShortageWithVehicle = Shortage & {
@@ -68,6 +72,17 @@ export type AccessRequestWithProfile = StationAccessRequest & {
 export type IssueWithVehicle = Issue & {
   vehicle: Pick<Vehicle, "vin" | "current_station"> | null;
   reporter: { display_name: string } | null;
+};
+
+export type StockCountItemWithVehicle = StockCountItem & {
+  vehicle: Pick<Vehicle, "vin" | "current_station"> | null;
+};
+
+export type StockCountWithProfiles = StockCount & {
+  requester: { display_name: string | null } | null;
+  starter: { display_name: string | null } | null;
+  completer: { display_name: string | null } | null;
+  items?: StockCountItemWithVehicle[];
 };
 
 export type ModelWithTrims = Model & { trims: ModelTrim[] };
